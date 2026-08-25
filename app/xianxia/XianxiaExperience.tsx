@@ -617,6 +617,14 @@ function MediaCueCard({ cue }: { cue: XianxiaMediaCue }) {
       </figure>
     );
   }
+  if (cue.kind === "video") {
+    return (
+      <figure className="xx-story-illustration xx-triggered-media">
+        <video src={cue.src} poster={cue.poster} autoPlay muted loop playsInline controls aria-label={cue.alt} />
+        <figcaption>{cue.caption}</figcaption>
+      </figure>
+    );
+  }
   return (
     <aside className="xx-hud-card" aria-label={cue.title}>
       <small>{cue.eyebrow}</small>

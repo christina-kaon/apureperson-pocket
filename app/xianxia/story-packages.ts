@@ -39,6 +39,14 @@ export type XianxiaMediaCue =
     }
   | {
       id: string;
+      kind: "video";
+      src: string;
+      poster?: string;
+      alt: string;
+      caption: string;
+    }
+  | {
+      id: string;
       kind: "hud";
       eyebrow: string;
       title: string;
@@ -446,6 +454,14 @@ const immortalSister: XianxiaStory = {
       title: "与雪同归",
       summary: "你带着矿账与人间证人重返十二峰，揭开裴行舟的栽赃和仙门繁荣背后的代价。闻照雪终于说出当年的选择；你没有接过掌权者让出的席位，只牵住她的手，一起离开山门。",
       content: [
+        {
+          id: "preview-ch05-ending-video",
+          kind: "video",
+          src: "/xianxia/immortal-sister/story/ch05-ending-with-snow-return-v1.mp4",
+          poster: "/xianxia/immortal-sister/story/ch05-ending-with-snow-return-poster.jpg",
+          alt: "两道剑光掠过云海竹林，月下松枝上白衣人俯瞰人间灯火",
+          caption: "终章影像 · 与雪同归",
+        },
         {
           id: "preview-ch05-ending",
           kind: "image",
