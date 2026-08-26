@@ -34,8 +34,9 @@ function toPublicStory(story: XianxiaStory): PublicXianxiaStory {
   };
 }
 
-export default function XianxiaPage() {
-  const selected = getXianxiaStory("immortal-sister");
+export default async function XianxiaPage({ searchParams }: { searchParams?: Promise<{ story?: string }> }) {
+  const params = searchParams ? await searchParams : undefined;
+  const selected = getXianxiaStory(params?.story ?? "immortal-sister");
   if (!selected) return null;
   return <XianxiaExperience story={toPublicStory(selected)} />;
 }

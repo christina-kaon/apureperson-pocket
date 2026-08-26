@@ -1,7 +1,10 @@
-export type XianxiaEventType = "narration" | "dialogue";
+export type XianxiaEventType = "narration" | "dialogue" | "os" | "system" | "loot";
+
+export type XianxiaLootItem = { name: string; qty: number; note?: string };
 
 export type XianxiaEvent = {
   type: XianxiaEventType;
+  items?: XianxiaLootItem[];
   person?: string;
   text: string;
 };
@@ -84,7 +87,7 @@ export type XianxiaSegment = {
 };
 
 export type XianxiaStory = {
-  id: "immortal-sister" | "steady-dao";
+  id: string;
   title: string;
   subtitle: string;
   logline: string;
@@ -115,6 +118,7 @@ export type XianxiaStory = {
   characters: XianxiaCharacter[];
   relationships: Array<{ id: string; roles: string[]; public: string; tension: string }>;
   worldProcesses?: Array<{ id: string; title: string; stage: string; note: string }>;
+  npcRelationSeeds?: Array<{ pair: [string, string]; warmth: number; tension: number; note: string }>;
   opening: {
     events: XianxiaEvent[];
     choices: XianxiaChoice[];
@@ -1322,9 +1326,14 @@ const steadyDao: XianxiaStory = {
   styleProfile: steadyDaoEnsembleRomanceStyle,
 };
 
+import pavilionKeeperData from "./pavilion-keeper.json";
+
+const pavilionKeeper = pavilionKeeperData as unknown as XianxiaStory;
+
 export const xianxiaStories: Partial<Record<XianxiaStory["id"], XianxiaStory>> = {
   "immortal-sister": immortalSister,
   "steady-dao": steadyDao,
+  "pavilion-keeper": pavilionKeeper,
 };
 
 export function getXianxiaStory(id: string | undefined) {

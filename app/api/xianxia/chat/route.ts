@@ -74,6 +74,10 @@ type SceneDelta = {
   closingMode: ClosingMode | null;
   worldProcessMoves: unknown;
   newProcess: unknown;
+  itemsGained: unknown;
+  itemsLost: unknown;
+  npcBelongingsUpdates: unknown;
+  npcRelationUpdates: unknown;
 };
 
 type ClientState = {
@@ -86,6 +90,9 @@ type ClientState = {
   sceneMemory?: Partial<SceneMemory>;
   encounterCooldown?: number;
   worldProcesses?: Array<{ id: string; title: string; stage: string; note: string }>;
+  inventory?: Array<{ name: string; qty: number; note?: string }>;
+  npcBelongings?: Record<string, Array<{ name: string; qty: number; note?: string }>>;
+  npcRelations?: Array<{ pair: [string, string]; warmth: number; tension: number; note: string }>;
 };
 
 type StoryRouting = "follow" | "echo" | "invite" | "trigger" | "diverge";
@@ -128,7 +135,7 @@ type PerceptionPacket = {
   private: string | null;
 };
 
-const eventTypes = new Set(["narration", "dialogue", "action", "reaction"]);
+const eventTypes = new Set(["narration", "dialogue", "action", "reaction", "os", "system", "loot"]);
 const closingModes = new Set<ClosingMode>([
   "question",
   "action",
@@ -390,6 +397,10 @@ function normalizeSceneDelta(value: unknown): SceneDelta {
     closingMode,
     worldProcessMoves: item.world_process_moves ?? null,
     newProcess: item.new_process ?? null,
+    itemsGained: item.items_gained ?? null,
+    itemsLost: item.items_lost ?? null,
+    npcBelongingsUpdates: item.npc_belongings_updates ?? null,
+    npcRelationUpdates: item.npc_relation_updates ?? null,
   };
 }
 
@@ -466,6 +477,89 @@ function adaptChapterPreview(
         }
       : cue),
   };
+}
+
+type LedgerItem = { name: string; qty: number; note?: string };
+
+function cleanItems(value: unknown, max = 20): LedgerItem[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((raw): LedgerItem[] => {
+    if (!raw || typeof raw !== "object") return [];
+    const item = raw as Record<string, unknown>;
+    if (typeof item.name !== "string" || !item.name.trim()) return [];
+    const qty = typeof item.qty === "number" && Number.isFinite(item.qty) ? Math.max(1, Math.round(item.qty)) : 1;
+    return [{ name: compactText(item.name, 24), qty, ...(typeof item.note === "string" && item.note.trim() ? { note: compactText(item.note, 60) } : {}) }];
+  }).slice(0, max);
+}
+
+function mergeInventory(base: LedgerItem[], gained: unknown, lost: unknown): LedgerItem[] {
+  const out = base.map((item) => ({ ...item }));
+  for (const gain of cleanItems(gained, 8)) {
+    const existing = out.find((item) => item.name === gain.name);
+    if (existing) existing.qty += gain.qty;
+    else out.push(gain);
+  }
+  for (const loss of cleanItems(lost, 8)) {
+    const existing = out.find((item) => item.name === loss.name);
+    if (!existing) continue;
+    existing.qty -= loss.qty;
+  }
+  return out.filter((item) => item.qty > 0).slice(0, 40);
+}
+
+type NpcRelation = { pair: [string, string]; warmth: number; tension: number; note: string };
+
+function cleanNpcRelations(value: unknown, seed: NpcRelation[]): NpcRelation[] {
+  if (!Array.isArray(value)) return seed.map((r) => ({ ...r, pair: [...r.pair] as [string, string] }));
+  const out = value.flatMap((raw): NpcRelation[] => {
+    if (!raw || typeof raw !== "object") return [];
+    const item = raw as Record<string, unknown>;
+    if (!Array.isArray(item.pair) || item.pair.length !== 2) return [];
+    return [{
+      pair: [String(item.pair[0]), String(item.pair[1])],
+      warmth: clamp(Number(item.warmth) || 50, 0, 100),
+      tension: clamp(Number(item.tension) || 30, 0, 100),
+      note: typeof item.note === "string" ? compactText(item.note, 80) : "",
+    }];
+  }).slice(0, 10);
+  return out.length ? out : seed.map((r) => ({ ...r, pair: [...r.pair] as [string, string] }));
+}
+
+function applyNpcRelationUpdates(current: NpcRelation[], updates: unknown): NpcRelation[] {
+  if (!Array.isArray(updates)) return current;
+  const out = current.map((r) => ({ ...r, pair: [...r.pair] as [string, string] }));
+  for (const raw of updates.slice(0, 6)) {
+    if (!raw || typeof raw !== "object") continue;
+    const item = raw as Record<string, unknown>;
+    if (!Array.isArray(item.pair) || item.pair.length !== 2) continue;
+    const a = String(item.pair[0]); const b = String(item.pair[1]);
+    const target = out.find((r) => (r.pair[0] === a && r.pair[1] === b) || (r.pair[0] === b && r.pair[1] === a));
+    const wd = clamp(Number(item.warmth_delta) || 0, -5, 5);
+    const td = clamp(Number(item.tension_delta) || 0, -5, 5);
+    const note = typeof item.note === "string" && item.note.trim() ? compactText(item.note, 80) : null;
+    if (target) {
+      target.warmth = clamp(target.warmth + wd, 0, 100);
+      target.tension = clamp(target.tension + td, 0, 100);
+      if (note) target.note = note;
+    } else if (out.length < 10) {
+      out.push({ pair: [a, b], warmth: clamp(50 + wd, 0, 100), tension: clamp(30 + td, 0, 100), note: note ?? "" });
+    }
+  }
+  return out;
+}
+
+function mergeNpcBelongings(base: Record<string, LedgerItem[]>, updates: unknown): Record<string, LedgerItem[]> {
+  const out: Record<string, LedgerItem[]> = {};
+  for (const [key, value] of Object.entries(base)) out[key] = value.map((item) => ({ ...item }));
+  if (!Array.isArray(updates)) return out;
+  for (const raw of updates.slice(0, 6)) {
+    if (!raw || typeof raw !== "object") continue;
+    const item = raw as Record<string, unknown>;
+    if (typeof item.person !== "string" || !item.person.trim()) continue;
+    const items = cleanItems(item.items, 15);
+    if (items.length) out[item.person] = items;
+  }
+  return out;
 }
 
 const processStages = ["起", "承", "转", "合"];
@@ -580,6 +674,17 @@ function normalizeTurn(value: unknown, story: XianxiaStory, present: string[]): 
     const event = raw as Record<string, unknown>;
     const text = typeof event.text === "string" ? event.text.trim() : "";
     if (!text || !eventTypes.has(String(event.type))) return [];
+    if (event.type === "system") return [{ type: "system", text }];
+    if (event.type === "loot") {
+      const items = cleanItems(event.items, 8);
+      return items.length ? [{ type: "loot", text, items }] : [{ type: "system", text }];
+    }
+    if (event.type === "os") {
+      const osPerson = typeof event.person === "string" ? event.person : "";
+      return presentSet.has(osPerson) && osPerson !== story.playerRole.id
+        ? [{ type: "os", person: osPerson, text }]
+        : [{ type: "narration", text }];
+    }
     if (event.type !== "dialogue") return [{ type: "narration", text }];
     const person = typeof event.person === "string" ? event.person : "";
     if (!presentSet.has(person) || person === story.playerRole.id) {
@@ -646,6 +751,9 @@ function promptForTurn(args: {
   worldProcesses?: WorldProcess[];
   mustEncounter?: boolean;
   directorBeat?: Record<string, unknown> | null;
+  inventory?: LedgerItem[];
+  npcBelongings?: Record<string, LedgerItem[]>;
+  npcRelations?: NpcRelation[];
 }) {
   const {
     story,
@@ -663,6 +771,9 @@ function promptForTurn(args: {
     worldProcesses,
     mustEncounter,
     directorBeat,
+    inventory = [],
+    npcBelongings = {},
+    npcRelations = [],
   } = args;
   const segment = story.segments[segmentIndex];
   const presentCharacters = story.characters
@@ -736,6 +847,9 @@ function promptForTurn(args: {
     encounter_beat: mustEncounter
       ? { must_introduce: true, guidance: "本轮必须让一名带自身目的的人物、消息或事件自然进场：公共场合可直接介入，私密场合用间接方式（门外动静、传讯、他人转述）。进场者优先与玩家当前正在做的事相关（凑热闹、送机会、添阻力都行），其次才与世界进程或未决线索相关；不得借进场把玩家拉回主线。" }
       : { must_introduce: false },
+    player_inventory: { usage: "玩家背包账本。获得/失去物品用loot事件呈现并在scene_delta.items_gained/items_lost登记；账本内容跨轮一致，不得凭空消失。", items: inventory },
+    npc_belongings: { usage: "NPC随身物品账本。玩家首次查看/偷看某NPC物品时现场生成合理内容并在scene_delta.npc_belongings_updates整表登记；已登记的下次必须一致。", records: npcBelongings },
+    npc_relations: { usage: "NPC之间的情感账本（warmth亲近0-100/tension张力0-100）。他们彼此的语气、袒护、拆台应与当前值相称；本轮NPC间互动造成变化时在scene_delta.npc_relation_updates汇报增减（-5到+5）。", pairs: npcRelations },
     ...(directorBeat ? { director_beat: { usage: "隐藏导演对本轮的拍板：正文应承接beat_goal与on_stage分配，结尾落在closing_direction指向的具体动作或变化上；若拍板与正史或玩家本轮实际行动冲突，以正史与玩家行动优先。", ...directorBeat } } : {}),
     recent_visible_events: history,
     scene_memory: sceneMemory,
@@ -819,7 +933,7 @@ ${JSON.stringify(runtimePacket)}
 - 只输出JSON，不输出解释、思维过程、导演计划、摘要或可见状态卡。
 
 输出结构：
-{"story_routing":"follow","activated_candidate":null,"chapter_complete":false,"events":[{"type":"narration","text":"现场正文"},{"type":"dialogue","person":"present角色id","text":"说出口的话"}],"choices":[{"kind":"speech","text":"玩家言行"},{"kind":"action","text":"相反方向言行"}],"hud_delta":{"steadiness":0,"jiujiu_affection":0,"lan_affection":0,"cultivation":0},"scene_delta":{"time":null,"location":null,"facts_added":[],"facts_resolved":[],"threads_opened":[],"threads_resolved":[],"relationship_notes":[],"closing_mode":"action","world_process_moves":[{"id":"进程id","advance":false,"note":""}],"new_process":null}}`;
+{"story_routing":"follow","activated_candidate":null,"chapter_complete":false,"events":[{"type":"narration","text":"现场正文"},{"type":"dialogue","person":"present角色id","text":"说出口的话"},{"type":"os","person":"角色id","text":"该角色此刻未说出口的真实心声（导演os_assignments指定时使用）"},{"type":"system","text":"系统口吻回执（装载/结算/判定时使用）"},{"type":"loot","text":"获得物品的一句话","items":[{"name":"物品名","qty":1,"note":"一句说明"}]}],"choices":[{"kind":"speech","text":"玩家言行"},{"kind":"action","text":"相反方向言行"}],"hud_delta":{"steadiness":0,"jiujiu_affection":0,"lan_affection":0,"cultivation":0},"scene_delta":{"time":null,"location":null,"facts_added":[],"facts_resolved":[],"threads_opened":[],"threads_resolved":[],"relationship_notes":[],"closing_mode":"action","world_process_moves":[{"id":"进程id","advance":false,"note":""}],"new_process":null,"items_gained":[],"items_lost":[],"npc_belongings_updates":[{"person":"角色id","items":[{"name":"","qty":1,"note":""}]}],"npc_relation_updates":[{"pair":["角色id","角色id"],"warmth_delta":0,"tension_delta":0,"note":""}]}}`;
 }
 
 type TurnBody = {
@@ -992,6 +1106,18 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
     const worldProcesses = cleanWorldProcesses(body.state?.worldProcesses, story.worldProcesses ?? []);
     const encounterCooldown = Math.max(0, finiteIndex(body.state?.encounterCooldown, 4));
     const mustEncounter = encounterCooldown === 0;
+    const inventory = cleanItems(body.state?.inventory, 40);
+    const npcBelongings: Record<string, LedgerItem[]> = {};
+    if (body.state?.npcBelongings && typeof body.state.npcBelongings === "object") {
+      for (const [key, value] of Object.entries(body.state.npcBelongings)) {
+        const items = cleanItems(value, 15);
+        if (items.length) npcBelongings[key] = items;
+      }
+    }
+    const npcRelationSeeds: NpcRelation[] = (story.npcRelationSeeds ?? story.relationships
+      .filter((r) => !r.roles.includes(story.playerRole.id) && r.roles.length === 2)
+      .map((r) => ({ pair: [r.roles[0], r.roles[1]] as [string, string], warmth: 55, tension: 35, note: compactText(r.tension, 80) })));
+    const npcRelations = cleanNpcRelations(body.state?.npcRelations, npcRelationSeeds);
 
     // P3-A 隐藏导演：短结构化拍板；失败时优雅回落为单调用直出。
     let directorBeat: Record<string, unknown> | null = null;
@@ -1011,9 +1137,11 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
         storybook_candidates: storybookCandidates.map(({ id: _id, ...candidate }) => candidate),
         world_processes: worldProcesses,
         encounter_beat: { must_introduce: mustEncounter },
+        player_inventory: inventory,
+        npc_relations: npcRelations,
         recent_history: history.slice(-8),
       };
-      const directorSystem = `你是互动仙侠故事的隐藏导演。不写玩家可见正文，不输出思维链，只为当前一拍输出一个JSON拍板。原则：先承认玩家本轮已造成的有效变化；只选真正相关的0-3名角色上场；角色行为由其private_goal、secret与关系张力决定；玩家引入新事物时定下其来源、限度与代价；world_processes只作机会性推进；encounter_beat.must_introduce为true时必须安排一个与玩家当前活动相关的带目的进场。满足优先：玩家索取的体验（读心心声/数值/面板清单）直接给足；storybook_candidates只是隐藏参考，玩家未指向主线时不选invite、不安排主线人物打断玩家当前玩法。只输出JSON：{"beat_type":"relationship|daily|exploration|conflict|reveal|aftermath|world_event","beat_goal":"一句话","story_routing":"follow|echo|invite|trigger|diverge","on_stage":["角色id"],"npc_motives":[{"id":"","want":"","behavior":""}],"world_change":null,"process_moves":[{"id":"","advance":false,"note":""}],"introduce_encounter":null,"closing_direction":"结尾停在的具体动作或变化","word_budget":900}`;
+      const directorSystem = `你是互动仙侠故事的隐藏导演。不写玩家可见正文，不输出思维链，只为当前一拍输出一个JSON拍板。原则：先承认玩家本轮已造成的有效变化；只选真正相关的0-3名角色上场；角色行为由其private_goal、secret与关系张力决定；玩家引入新事物时定下其来源、限度与代价；world_processes只作机会性推进；encounter_beat.must_introduce为true时必须安排一个与玩家当前活动相关的带目的进场。满足优先：玩家索取的体验（读心心声/数值/面板清单）直接给足；storybook_candidates只是隐藏参考，玩家未指向主线时不选invite、不安排主线人物打断玩家当前玩法。os_assignments给0-2名本轮有内心戏价值的角色（口嫌体正直、表里反差优先），不逢人配OS。玩家做偷窃/暗中行动等风险动作时，你按关系、情境与戏剧性裁定成、败或被抓个半截（loot_hint写结果）。npc_interaction可指定一对NPC本轮发生不经过玩家的互动及其性质（依npc_relations当前值：warmth低互相带刺、tension高正面冲突）。只输出JSON：{"beat_type":"relationship|daily|exploration|conflict|reveal|aftermath|world_event","beat_goal":"一句话","story_routing":"follow|echo|invite|trigger|diverge","on_stage":["角色id"],"npc_motives":[{"id":"","want":"","behavior":""}],"world_change":null,"process_moves":[{"id":"","advance":false,"note":""}],"introduce_encounter":null,"closing_direction":"结尾停在的具体动作或变化","word_budget":900,"os_assignments":[{"id":"","tone":""}],"loot_hint":null,"npc_interaction":null}`;
       const rawBeat = await callStoryModel(directorSystem, JSON.stringify(directorPacket), 0.5, 700);
       const parsedBeat = typeof rawBeat === "string" ? parseModelJson(rawBeat) : rawBeat;
       if (parsedBeat && typeof parsedBeat === "object") directorBeat = parsedBeat as Record<string, unknown>;
@@ -1037,6 +1165,9 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
       worldProcesses,
       mustEncounter,
       directorBeat,
+      inventory,
+      npcBelongings,
+      npcRelations,
       sceneMemory,
     });
     // V4.4 流式：首发尝试用流式调用并逐个下发已闭合 event；
@@ -1086,6 +1217,10 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
     const beatMoves = directorBeat && Array.isArray(directorBeat.process_moves) ? directorBeat.process_moves : null;
     const nextProcesses = advanceWorldProcesses(worldProcesses, beatMoves ?? result.sceneDelta.worldProcessMoves, result.sceneDelta.newProcess);
     const nextEncounterCooldown = mustEncounter ? 6 : Math.max(0, encounterCooldown - 1);
+    const lootFromEvents = result.events.filter((event) => event.type === "loot").flatMap((event) => event.items ?? []);
+    const nextInventory = mergeInventory(inventory, [...cleanItems(result.sceneDelta.itemsGained, 8), ...lootFromEvents], result.sceneDelta.itemsLost);
+    const nextNpcBelongings = mergeNpcBelongings(npcBelongings, result.sceneDelta.npcBelongingsUpdates);
+    const nextNpcRelations = applyNpcRelationUpdates(npcRelations, result.sceneDelta.npcRelationUpdates);
     const proposedHudDelta = result.hudDelta ?? fallbackHudDelta(input);
     const hudDelta = reconcileAffectionDelta(input, history, proposedHudDelta);
     const nextHud = applyHudDelta(hud, hudDelta);
@@ -1129,6 +1264,9 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
       sceneMemory: nextSceneMemory,
       encounterCooldown: nextEncounterCooldown,
       worldProcesses: nextProcesses,
+      inventory: nextInventory,
+      npcBelongings: nextNpcBelongings,
+      npcRelations: nextNpcRelations,
     };
     const nextState = chapterOutcome
       ? {

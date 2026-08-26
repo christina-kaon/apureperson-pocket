@@ -525,7 +525,30 @@ export default function XianxiaExperience({ story }: { story: PublicXianxiaStory
             && displayedChapterId === "ch01"
             && item.id === firstResponseEventId;
           let eventContent;
-          if (item.type !== "dialogue" || !item.person) {
+          if (item.type === "system") {
+            eventContent = <div className="xx-system-event">{item.text}</div>;
+          } else if (item.type === "loot") {
+            eventContent = (
+              <div className="xx-loot-event">
+                <p>{item.text}</p>
+                {item.items && item.items.length > 0 && (
+                  <ul>
+                    {item.items.map((loot, lootIndex) => (
+                      <li key={lootIndex}><strong>{loot.name}</strong> ×{loot.qty}{loot.note ? <span> —— {loot.note}</span> : null}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            );
+          } else if (item.type === "os" && item.person) {
+            const osCharacter = characterById.get(item.person);
+            eventContent = (
+              <div className="xx-os-event">
+                <header>{osCharacter?.name ?? "？"} 的心声</header>
+                <p>『{item.text}』</p>
+              </div>
+            );
+          } else if (item.type !== "dialogue" || !item.person) {
             eventContent = <p className="xx-narration">{item.text}</p>;
           } else {
             const character = characterById.get(item.person);
