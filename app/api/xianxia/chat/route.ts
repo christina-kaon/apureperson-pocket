@@ -642,6 +642,35 @@ function ensureDivergentChoices(choices: XianxiaChoice[]): XianxiaChoice[] {
   ];
 }
 
+// 旁白里带引号且能锁定说话者的台词，确定性升格为 dialogue 气泡。
+function promoteQuotedSpeech(events: XianxiaEvent[], story: XianxiaStory, present: string[]): XianxiaEvent[] {
+  const presentChars = story.characters.filter((c) => present.includes(c.id));
+  const out: XianxiaEvent[] = [];
+  for (const event of events) {
+    if (event.type !== "narration" || !event.text) { out.push(event); continue; }
+    const text = event.text;
+    const quoteRe = /[「“"]([^」”"]{2,220})[」”"]/gu;
+    let cursor = 0; let splits = 0;
+    let match: RegExpExecArray | null;
+    const pieces: XianxiaEvent[] = [];
+    while ((match = quoteRe.exec(text)) !== null && splits < 3) {
+      const lookback = text.slice(Math.max(0, match.index - 30), match.index);
+      const speaker = presentChars.find((c) => lookback.includes(c.name));
+      if (!speaker || speaker.id === story.playerRole.id) continue;
+      let prefix = text.slice(cursor, match.index).trim().replace(/[：:，,]$/u, "");
+      if (prefix) pieces.push({ type: "narration", text: /[。！？!?”」』]$/u.test(prefix) ? prefix : `${prefix}。` });
+      pieces.push({ type: "dialogue", person: speaker.id, text: match[1] });
+      cursor = match.index + match[0].length;
+      splits += 1;
+    }
+    if (!splits) { out.push(event); continue; }
+    const tail = text.slice(cursor).trim();
+    if (tail.length >= 4) pieces.push({ type: "narration", text: tail });
+    out.push(...pieces);
+  }
+  return out;
+}
+
 const hangingTail = /(?:[^。！？!?]*(?:你|少侠|师弟|师兄)[^。！？!?]*还是[^。！？!?]*[？?]|[^。！？!?]*(?:等待|等着|静候)[^。！？!?]{0,20}(?:回答|决定|答复|示下|回应)[^。！？!?]*[。！？!?]?)\s*$/u;
 
 // 确定性剪除"A还是B问句/等待玩家回答"式悬空结尾：prompt 禁令屡被违反，改为程序义务。
@@ -705,7 +734,7 @@ function normalizeTurn(value: unknown, story: XianxiaStory, present: string[]): 
   }).slice(0, 2);
   if (choices.length !== 2) return null;
   return {
-    events: stripHangingEnding(events),
+    events: stripHangingEnding(promoteQuotedSpeech(events, story, present)),
     choices,
     hudDelta: normalizeHudDelta(item.hud_delta),
     storyRouting: storyRoutings.has(item.story_routing as StoryRouting)
