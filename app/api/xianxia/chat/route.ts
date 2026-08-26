@@ -1,4 +1,5 @@
 import { callStoryModel, callStoryModelStream, parseModelJson } from "../../../model-client";
+import xianxiaCanon from "../../../xianxia/xianxia-canon.json";
 import {
   getXianxiaStory,
   type XianxiaChapterEndPreview,
@@ -505,6 +506,22 @@ function normalizeTurn(value: unknown, story: XianxiaStory, present: string[]): 
   };
 }
 
+function buildCanonPacket(scanText: string) {
+  const hits: Array<{ title: string; content: string }> = [];
+  let used = 0;
+  for (const entry of xianxiaCanon.keyed) {
+    if (!entry.keys.some((k: string) => k && scanText.includes(k))) continue;
+    if (used + entry.content.length > 3500) continue;
+    hits.push({ title: entry.title, content: entry.content });
+    used += entry.content.length;
+  }
+  return {
+    usage: "题材硬设定资产：正文描写、能力与位阶判定、物价与称谓应与其一致；若与本故事已确立正史或人物能力冲突，以正史优先。",
+    core: xianxiaCanon.core,
+    hits,
+  };
+}
+
 function promptForTurn(args: {
   story: XianxiaStory;
   input: string;
@@ -517,6 +534,7 @@ function promptForTurn(args: {
   hud: HudStats;
   chapterHandoff?: ChapterHandoff;
   sceneMemory: SceneMemory;
+  canon?: ReturnType<typeof buildCanonPacket> | null;
 }) {
   const {
     story,
@@ -530,6 +548,7 @@ function promptForTurn(args: {
     hud,
     chapterHandoff,
     sceneMemory,
+    canon,
   } = args;
   const segment = story.segments[segmentIndex];
   const presentCharacters = story.characters
@@ -595,6 +614,7 @@ function promptForTurn(args: {
     present_characters: presentCharacters,
     focus_relationships: focusRelationships,
     present_relationships: presentRelationships,
+    ...(canon ? { canon_worldbook: canon } : {}),
     recent_visible_events: history,
     scene_memory: sceneMemory,
     player_perception: perception,
@@ -847,6 +867,9 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
         divergence_guidance: material.divergence ?? "若玩家已改变前提，保留这一节点的戏剧功能，按当前事实改写过程与结果。",
       }));
     const perception = buildPerceptionPacket(input, inputKind, segment.present);
+    const canonPacket = (body as { canonAssets?: boolean }).canonAssets === true
+      ? buildCanonPacket(`${history.map((h) => h.text ?? "").join(" ").slice(-3000)} ${input}`)
+      : null;
 
     const turnPrompt = promptForTurn({
       story,
@@ -859,6 +882,7 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
       turnsSinceMaterial,
       hud,
       chapterHandoff: body.state?.chapterHandoff,
+      canon: canonPacket,
       sceneMemory,
     });
     // V4.4 流式：首发尝试用流式调用并逐个下发已闭合 event；
