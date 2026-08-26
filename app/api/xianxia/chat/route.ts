@@ -72,6 +72,8 @@ type SceneDelta = {
   threadsResolved: string[];
   relationshipNotes: string[];
   closingMode: ClosingMode | null;
+  worldProcessMoves: unknown;
+  newProcess: unknown;
 };
 
 type ClientState = {
@@ -82,6 +84,8 @@ type ClientState = {
   hud?: Partial<HudStats>;
   chapterHandoff?: ChapterHandoff;
   sceneMemory?: Partial<SceneMemory>;
+  encounterCooldown?: number;
+  worldProcesses?: Array<{ id: string; title: string; stage: string; note: string }>;
 };
 
 type StoryRouting = "follow" | "echo" | "invite" | "trigger" | "diverge";
@@ -384,6 +388,8 @@ function normalizeSceneDelta(value: unknown): SceneDelta {
     threadsResolved: cleanStringList(item.threads_resolved, 4, 100),
     relationshipNotes: cleanStringList(item.relationship_notes, 4, 100),
     closingMode,
+    worldProcessMoves: item.world_process_moves ?? null,
+    newProcess: item.new_process ?? null,
   };
 }
 
@@ -460,6 +466,86 @@ function adaptChapterPreview(
         }
       : cue),
   };
+}
+
+const processStages = ["起", "承", "转", "合"];
+type WorldProcess = { id: string; title: string; stage: string; note: string };
+
+function cleanWorldProcesses(value: unknown, seed: Array<{ id: string; title: string; stage: string; note: string }>): WorldProcess[] {
+  if (!Array.isArray(value)) return seed.map((p) => ({ ...p }));
+  const out = value.flatMap((raw): WorldProcess[] => {
+    if (!raw || typeof raw !== "object") return [];
+    const item = raw as Record<string, unknown>;
+    if (typeof item.id !== "string" || typeof item.title !== "string") return [];
+    return [{
+      id: compactText(item.id, 40),
+      title: compactText(String(item.title), 40),
+      stage: processStages.includes(String(item.stage)) ? String(item.stage) : "起",
+      note: typeof item.note === "string" ? compactText(item.note, 120) : "",
+    }];
+  }).slice(0, 2);
+  return out.length ? out : seed.map((p) => ({ ...p }));
+}
+
+// 世界进程按 起→承→转→合 单向推进；走完"合"移除，空位由模型给的新进程补上。
+function advanceWorldProcesses(current: WorldProcess[], moves: unknown, newProcess: unknown): WorldProcess[] {
+  const moveList = Array.isArray(moves) ? moves as Array<Record<string, unknown>> : [];
+  let next = current.map((p) => ({ ...p }));
+  for (const move of moveList) {
+    if (!move || typeof move !== "object") continue;
+    const target = next.find((p) => p.id === move.id);
+    if (!target) continue;
+    if (move.advance === true) {
+      const idx = processStages.indexOf(target.stage);
+      if (idx >= 0 && idx < 3) target.stage = processStages[idx + 1];
+      else if (idx === 3) target.stage = "完";
+    }
+    if (typeof move.note === "string" && move.note.trim()) target.note = compactText(move.note, 120);
+  }
+  next = next.filter((p) => p.stage !== "完");
+  const fresh = newProcess && typeof newProcess === "object" ? newProcess as Record<string, unknown> : null;
+  if (next.length < 2 && fresh && typeof fresh.title === "string" && (fresh.title as string).trim()) {
+    next.push({
+      id: `proc_${Date.now().toString(36)}`,
+      title: compactText(String(fresh.title), 40),
+      stage: "起",
+      note: typeof fresh.note === "string" ? compactText(fresh.note, 120) : "",
+    });
+  }
+  return next.slice(0, 2);
+}
+
+// 问句冷却的程序执行：上轮已问句收尾，本轮末事件再以问句收尾则剪掉末句。
+function stripTrailingQuestionSentence(events: XianxiaEvent[]): XianxiaEvent[] {
+  if (!events.length) return events;
+  const out = events.map((event) => ({ ...event }));
+  const last = out[out.length - 1];
+  const text = (last.text ?? "").trim();
+  if (!/[？?][”」』"]?$/.test(text)) return events;
+  const cut = text.replace(/[^。！？!?]*[？?][”」』"]?\s*$/u, "").trim().replace(/[，、：:；;]$/u, "");
+  if ([...cut].length >= 10) {
+    last.text = /[。！？!?”」』]$/u.test(cut) ? cut : `${cut}。`;
+    return out;
+  }
+  if (out.length > 5) { out.pop(); return out; }
+  return events;
+}
+
+// 两个 choices 高度同向/重复时，确定性替换第二项为反方向兜底。
+function ensureDivergentChoices(choices: XianxiaChoice[]): XianxiaChoice[] {
+  if (choices.length !== 2) return choices;
+  const a = choices[0].text;
+  const b = choices[1].text;
+  const setA = new Set([...a]);
+  const overlap = [...b].filter((ch) => setA.has(ch)).length;
+  const similarity = overlap / Math.max([...a].length, [...b].length, 1);
+  if (similarity < 0.7 && a.slice(0, 6) !== b.slice(0, 6)) return choices;
+  return [
+    choices[0],
+    choices[1].kind === "speech"
+      ? { kind: "action", text: "先按下不表，转身处理眼前另一件事" }
+      : { kind: "speech", text: "把心里的疑虑当面挑明" },
+  ];
 }
 
 const hangingTail = /(?:[^。！？!?]*(?:你|少侠|师弟|师兄)[^。！？!?]*还是[^。！？!?]*[？?]|[^。！？!?]*(?:等待|等着|静候)[^。！？!?]{0,20}(?:回答|决定|答复|示下|回应)[^。！？!?]*[。！？!?]?)\s*$/u;
@@ -557,6 +643,9 @@ function promptForTurn(args: {
   chapterHandoff?: ChapterHandoff;
   sceneMemory: SceneMemory;
   canon?: ReturnType<typeof buildCanonPacket> | null;
+  worldProcesses?: WorldProcess[];
+  mustEncounter?: boolean;
+  directorBeat?: Record<string, unknown> | null;
 }) {
   const {
     story,
@@ -571,6 +660,9 @@ function promptForTurn(args: {
     chapterHandoff,
     sceneMemory,
     canon,
+    worldProcesses,
+    mustEncounter,
+    directorBeat,
   } = args;
   const segment = story.segments[segmentIndex];
   const presentCharacters = story.characters
@@ -637,6 +729,14 @@ function promptForTurn(args: {
     focus_relationships: focusRelationships,
     present_relationships: presentRelationships,
     ...(canon ? { canon_worldbook: canon } : {}),
+    world_processes: {
+      usage: "世界在玩家之外自行推进的进程（数据）。正文可以让其显现为可见迹象或事件；本轮若某进程实际推进，在scene_delta.world_process_moves如实汇报；某进程走完‘合’后可在scene_delta.new_process给一条新的‘起’。不强制每轮推进。",
+      items: worldProcesses ?? [],
+    },
+    encounter_beat: mustEncounter
+      ? { must_introduce: true, guidance: "本轮必须让一名带自身目的的人物、消息或事件自然进场：公共场合可直接介入，私密场合用间接方式（门外动静、传讯、他人转述）。进场者需与在场角色、世界进程或未决线索有真实关联。" }
+      : { must_introduce: false },
+    ...(directorBeat ? { director_beat: { usage: "隐藏导演对本轮的拍板：正文应承接beat_goal与on_stage分配，结尾落在closing_direction指向的具体动作或变化上；若拍板与正史或玩家本轮实际行动冲突，以正史与玩家行动优先。", ...directorBeat } } : {}),
     recent_visible_events: history,
     scene_memory: sceneMemory,
     player_perception: perception,
@@ -722,7 +822,7 @@ ${JSON.stringify(runtimePacket)}
 - 只输出JSON，不输出解释、思维过程、导演计划、摘要或可见状态卡。
 
 输出结构：
-{"story_routing":"follow","activated_candidate":null,"chapter_complete":false,"events":[{"type":"narration","text":"现场正文"},{"type":"dialogue","person":"present角色id","text":"说出口的话"}],"choices":[{"kind":"speech","text":"玩家言行"},{"kind":"action","text":"相反方向言行"}],"hud_delta":{"steadiness":0,"jiujiu_affection":0,"lan_affection":0,"cultivation":0},"scene_delta":{"time":null,"location":null,"facts_added":[],"facts_resolved":[],"threads_opened":[],"threads_resolved":[],"relationship_notes":[],"closing_mode":"action"}}`;
+{"story_routing":"follow","activated_candidate":null,"chapter_complete":false,"events":[{"type":"narration","text":"现场正文"},{"type":"dialogue","person":"present角色id","text":"说出口的话"}],"choices":[{"kind":"speech","text":"玩家言行"},{"kind":"action","text":"相反方向言行"}],"hud_delta":{"steadiness":0,"jiujiu_affection":0,"lan_affection":0,"cultivation":0},"scene_delta":{"time":null,"location":null,"facts_added":[],"facts_resolved":[],"threads_opened":[],"threads_resolved":[],"relationship_notes":[],"closing_mode":"action","world_process_moves":[{"id":"进程id","advance":false,"note":""}],"new_process":null}}`;
 }
 
 type TurnBody = {
@@ -892,6 +992,38 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
     const canonPacket = (body as { canonAssets?: boolean }).canonAssets === true
       ? buildCanonPacket(`${history.map((h) => h.text ?? "").join(" ").slice(-3000)} ${input}`)
       : null;
+    const worldProcesses = cleanWorldProcesses(body.state?.worldProcesses, story.worldProcesses ?? []);
+    const encounterCooldown = Math.max(0, finiteIndex(body.state?.encounterCooldown, 4));
+    const mustEncounter = encounterCooldown === 0;
+
+    // P3-A 隐藏导演：短结构化拍板；失败时优雅回落为单调用直出。
+    let directorBeat: Record<string, unknown> | null = null;
+    const directorStart = Date.now();
+    try {
+      const presentOrPlayerIds = new Set([...segment.present, story.playerRole.id]);
+      const directorPacket = {
+        player_input: input,
+        input_kind: inputKind,
+        scene: { location: sceneMemory.location ?? segment.location, goal: segment.goal, pressure: segment.pressure },
+        scene_memory: sceneMemory,
+        perception,
+        present_characters: story.characters
+          .filter((character) => segment.present.includes(character.id))
+          .map((character) => ({ id: character.id, name: character.name, private_goal: character.privateGoal, secret: character.secret })),
+        relationships: story.relationships.filter((relationship) => relationship.roles.every((role) => presentOrPlayerIds.has(role))),
+        storybook_candidates: storybookCandidates.map(({ id: _id, ...candidate }) => candidate),
+        world_processes: worldProcesses,
+        encounter_beat: { must_introduce: mustEncounter },
+        recent_history: history.slice(-8),
+      };
+      const directorSystem = `你是互动仙侠故事的隐藏导演。不写玩家可见正文，不输出思维链，只为当前一拍输出一个JSON拍板。原则：先承认玩家本轮已造成的有效变化；只选真正相关的0-3名角色上场；角色行为由其private_goal、secret与关系张力决定；玩家引入新事物时定下其来源、限度与代价；world_processes只作机会性推进；encounter_beat.must_introduce为true时必须安排一个带目的的进场。只输出JSON：{"beat_type":"relationship|daily|exploration|conflict|reveal|aftermath|world_event","beat_goal":"一句话","story_routing":"follow|echo|invite|trigger|diverge","on_stage":["角色id"],"npc_motives":[{"id":"","want":"","behavior":""}],"world_change":null,"process_moves":[{"id":"","advance":false,"note":""}],"introduce_encounter":null,"closing_direction":"结尾停在的具体动作或变化","word_budget":900}`;
+      const rawBeat = await callStoryModel(directorSystem, JSON.stringify(directorPacket), 0.5, 700);
+      const parsedBeat = typeof rawBeat === "string" ? parseModelJson(rawBeat) : rawBeat;
+      if (parsedBeat && typeof parsedBeat === "object") directorBeat = parsedBeat as Record<string, unknown>;
+    } catch {
+      directorBeat = null;
+    }
+    const directorMs = Date.now() - directorStart;
 
     const turnPrompt = promptForTurn({
       story,
@@ -905,6 +1037,9 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
       hud,
       chapterHandoff: body.state?.chapterHandoff,
       canon: canonPacket,
+      worldProcesses,
+      mustEncounter,
+      directorBeat,
       sceneMemory,
     });
     // V4.4 流式：首发尝试用流式调用并逐个下发已闭合 event；
@@ -947,6 +1082,13 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
     }
     const result = normalizeTurn(raw, story, segment.present);
     if (!result) throw new Error("prompt3_shape_invalid_after_validation");
+    if (baseSceneMemory.lastClosingMode === "question") {
+      result.events = stripTrailingQuestionSentence(result.events);
+    }
+    result.choices = ensureDivergentChoices(result.choices);
+    const beatMoves = directorBeat && Array.isArray(directorBeat.process_moves) ? directorBeat.process_moves : null;
+    const nextProcesses = advanceWorldProcesses(worldProcesses, beatMoves ?? result.sceneDelta.worldProcessMoves, result.sceneDelta.newProcess);
+    const nextEncounterCooldown = mustEncounter ? 6 : Math.max(0, encounterCooldown - 1);
     const proposedHudDelta = result.hudDelta ?? fallbackHudDelta(input);
     const hudDelta = reconcileAffectionDelta(input, history, proposedHudDelta);
     const nextHud = applyHudDelta(hud, hudDelta);
@@ -988,6 +1130,8 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
       usedMaterialIds: [...usedMaterialIds],
       hud: nextHud,
       sceneMemory: nextSceneMemory,
+      encounterCooldown: nextEncounterCooldown,
+      worldProcesses: nextProcesses,
     };
     const nextState = chapterOutcome
       ? {
@@ -1009,6 +1153,7 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
       state: nextState,
       turnHud: story.id === "steady-dao" ? makeTurnHud(nextHud, hudDelta, unlockedTitle) : undefined,
       current: { segmentId: segment.id, chapterId: segment.chapterId, location: nextSceneMemory.location ?? segment.location },
+      directorMs,
       chapterComplete,
       nextChapterId: chapterComplete ? nextSegment?.chapterId : undefined,
       mediaCues: materialCommitted && activatedCandidate && result.storyRouting === "trigger"
