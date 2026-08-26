@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import XianxiaExperience, { type PublicXianxiaStory } from "./XianxiaExperience";
+import XianxiaExperience, { XianxiaMaterialPreview, type PublicXianxiaStory } from "./XianxiaExperience";
 import { getXianxiaStory, type XianxiaStory } from "./story-packages";
 import "./xianxia.css";
 
@@ -28,14 +28,22 @@ function toPublicStory(story: XianxiaStory): PublicXianxiaStory {
       featured,
     })),
     opening: { events: story.opening.events, choices: story.opening.choices },
+    initialHud: story.initialHud,
     chapterBackgrounds: story.chapterBackgrounds,
     chapterEndPreviews: story.chapterEndPreviews,
     backgroundMusic: story.backgroundMusic,
   };
 }
 
-export default function XianxiaPage() {
+export default async function XianxiaPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ preview?: string | string[] }>;
+}) {
+  const params = await searchParams;
   const selected = getXianxiaStory("immortal-sister");
   if (!selected) return null;
-  return <XianxiaExperience story={toPublicStory(selected)} />;
+  const story = toPublicStory(selected);
+  if (params.preview === "materials") return <XianxiaMaterialPreview story={story} />;
+  return <XianxiaExperience story={story} />;
 }
