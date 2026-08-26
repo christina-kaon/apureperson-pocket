@@ -65,7 +65,8 @@
    "privateGoal": "在大比中晋升内门，不让自己在顾栖迟面前显得太没用——虽然她自己还没意识到后半句。",
    "secret": "对沈疏影瞒着自己翻出剑穗后的那一刻心跳；若被追问会先说是好奇，追问第二遍才可能说漏嘴。",
    "firstAppearance": "推开外阁门时先探头进来确认顾栖迟在不在，确认了才整个人走进来，把桂花糕放在登记台角落，说今天的消息多得很，顾哥你要不要听。",
-   "featured": true
+   "featured": true,
+   "portrait": "/xianxia/pavilion-keeper/portraits/ruan_qingwu.png"
   },
   {
    "id": "shen_shuying",
@@ -77,7 +78,8 @@
    "privateGoal": "在顾栖迟彻底被逼出水面之前，亲口从他那里得到一个真实的答案——不是为了执法，是为了自己。",
    "secret": "对顾栖迟瞒着那个没问出口的问题背后的旧情；若顾栖迟正面追问她为什么每次都来，她会用公务堵回去，但眼神会偏开。",
    "firstAppearance": "持执法堂令牌推门而入，阿童立刻噤声，阮青梧缩进书架后，她目光在登记台上的顾栖迟身上停了一息，然后说例行查核，借阅记录拿来。",
-   "featured": true
+   "featured": true,
+   "portrait": "/xianxia/pavilion-keeper/portraits/shen_shuying.png"
   },
   {
    "id": "wen_yanzhi",
@@ -89,7 +91,8 @@
    "privateGoal": "在不彻底破坏与顾栖迟关系的前提下取得《太衍遗策》的接触权——他个人对禁书的兴趣已经超出了委托本身。",
    "secret": "对委托方瞒着自己对顾栖迟产生的某种真实的尊重；若顾栖迟直接问他委托方是谁，他会给出一个真实但不完整的答案。",
    "firstAppearance": "在阮青梧和阿童都在场时登门，先向阿童借了一册地理志作为开场，再转向顾栖迟，说久闻藏经阁典藏丰富，今日得见，果然名不虚传——语气里没有任何奉承的意思，只是陈述。",
-   "featured": true
+   "featured": true,
+   "portrait": "/xianxia/pavilion-keeper/portraits/wen_yanzhi.png"
   },
   {
    "id": "a_tong",
@@ -101,7 +104,8 @@
    "privateGoal": "让藏经阁一直这么安静地开着，顾栖迟一直在，他也一直在——他没有把这个想法说出来过，甚至没有完整地想清楚过。",
    "secret": "对所有人瞒着他其实隐约感觉顾栖迟不是普通管阁人，但选择不去想清楚；若被直接追问会先装傻，追问第二遍会说我就是个扫地的我什么都不知道。",
    "firstAppearance": "蹲在外阁角落里用扫帚柄比划，正在给一摞书讲温衍之昨日借了七卷地理志的事，声情并茂，浑然不觉顾栖迟已经睁开眼睛看着他。",
-   "featured": true
+   "featured": true,
+   "portrait": "/xianxia/pavilion-keeper/portraits/a_tong.png"
   }
  ],
  "relationships": [

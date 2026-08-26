@@ -680,8 +680,10 @@ function promoteQuotedSpeech(events: XianxiaEvent[], story: XianxiaStory, presen
     let match: RegExpExecArray | null;
     const pieces: XianxiaEvent[] = [];
     while ((match = quoteRe.exec(text)) !== null && splits < 3) {
-      const lookback = text.slice(Math.max(0, match.index - 30), match.index);
-      const speaker = presentChars.find((c) => lookback.includes(c.name));
+      const lookback = text.slice(Math.max(0, match.index - 50), match.index);
+      const lookahead = text.slice(match.index + match[0].length, match.index + match[0].length + 16);
+      const speaker = presentChars.find((c) => lookback.includes(c.name))
+        ?? presentChars.find((c) => lookahead.includes(c.name) && /[说道答问叹笑]/.test(lookahead));
       if (!speaker || speaker.id === story.playerRole.id) continue;
       let prefix = text.slice(cursor, match.index).trim().replace(/[：:，,]$/u, "");
       if (prefix) pieces.push({ type: "narration", text: /[。！？!?”」』]$/u.test(prefix) ? prefix : `${prefix}。` });
@@ -1196,7 +1198,7 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
         npc_relations: npcRelations,
         recent_history: history.slice(-8),
       };
-      const directorSystem = `你是互动仙侠故事的隐藏导演。不写玩家可见正文，不输出思维链，只为当前一拍输出一个JSON拍板。原则：先承认玩家本轮已造成的有效变化；只选真正相关的0-3名角色上场；角色行为由其private_goal、secret与关系张力决定；玩家引入新事物时定下其来源、限度与代价；world_processes只作机会性推进；encounter_beat.must_introduce为true时必须安排一个与玩家当前活动相关的带目的进场。满足优先：玩家索取的体验（读心心声/数值/面板清单）直接给足；storybook_candidates只是隐藏参考，玩家未指向主线时不选invite、不安排主线人物打断玩家当前玩法。os_assignments给0-2名本轮有内心戏价值的角色（口嫌体正直、表里反差优先），不逢人配OS。玩家做偷窃/暗中行动等风险动作时，你按关系、情境与戏剧性裁定成、败或被抓个半截（loot_hint写结果）。npc_interaction可指定一对NPC本轮发生不经过玩家的互动及其性质（依npc_relations当前值：warmth低互相带刺、tension高正面冲突）。只输出JSON：{"beat_type":"relationship|daily|exploration|conflict|reveal|aftermath|world_event","beat_goal":"一句话","story_routing":"follow|echo|invite|trigger|diverge","on_stage":["角色id"],"npc_motives":[{"id":"","want":"","behavior":""}],"world_change":null,"process_moves":[{"id":"","advance":false,"note":""}],"introduce_encounter":null,"closing_direction":"结尾停在的具体动作或变化","word_budget":900,"os_assignments":[{"id":"","tone":""}],"loot_hint":null,"npc_interaction":null}`;
+      const directorSystem = `你是互动仙侠故事的隐藏导演。不写玩家可见正文，不输出思维链，只为当前一拍输出一个JSON拍板。原则：先承认玩家本轮已造成的有效变化；只选真正相关的0-3名角色上场；角色行为由其private_goal、secret与关系张力决定；玩家引入新事物时定下其来源、限度与代价；world_processes只作机会性推进；encounter_beat.must_introduce为true时必须安排一个与玩家当前活动相关的带目的进场。满足优先：玩家索取的体验（读心心声/数值/面板清单）直接给足；storybook_candidates只是隐藏参考，玩家未指向主线时不选invite、不安排主线人物打断玩家当前玩法。os_assignments给0-2名本轮有内心戏价值的角色（口嫌体正直、表里反差优先），不逢人配OS。玩家做偷窃/暗中行动等风险动作时，你按关系、情境与戏剧性裁定成、败或被抓个半截（loot_hint写结果）。npc_interaction可指定一对NPC本轮发生不经过玩家的互动及其性质（依npc_relations当前值：warmth低互相带刺、tension高正面冲突）。只输出JSON：{"beat_type":"relationship|daily|exploration|conflict|reveal|aftermath|world_event","beat_goal":"一句话","story_routing":"follow|echo|invite|trigger|diverge","on_stage":["角色id"],"npc_motives":[{"id":"","want":"","behavior":""}],"world_change":null,"process_moves":[{"id":"","advance":false,"note":""}],"introduce_encounter":null,"closing_direction":"本轮结尾必须落在的具体钩子（新异动/未完动作/他人反应/环境变化，能自然勾出玩家下一步，不许平收）","word_budget":900,"os_assignments":[{"id":"","tone":""}],"loot_hint":null,"npc_interaction":null}`;
       const rawBeat = await callStoryModel(directorSystem, JSON.stringify(directorPacket), 0.5, 700);
       const parsedBeat = typeof rawBeat === "string" ? parseModelJson(rawBeat) : rawBeat;
       if (parsedBeat && typeof parsedBeat === "object") directorBeat = parsedBeat as Record<string, unknown>;
