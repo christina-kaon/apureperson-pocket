@@ -543,10 +543,13 @@ export default function XianxiaExperience({ story }: { story: PublicXianxiaStory
           } else if (item.type === "os" && item.person) {
             const osCharacter = characterById.get(item.person);
             eventContent = (
-              <div className="xx-os-event">
-                <header>{osCharacter?.name ?? "？"} 的心声</header>
-                <p>『{item.text}』</p>
-              </div>
+              <article className="xx-npc-event xx-dialogue">
+                <button onClick={() => osCharacter && setActiveCharacter(osCharacter)}>{osCharacter ? <CharacterPortrait character={osCharacter} /> : "·"}</button>
+                <div>
+                  <header>{osCharacter?.name ?? "现场"}</header>
+                  <p className="xx-os-inline">（os：{item.text}）</p>
+                </div>
+              </article>
             );
           } else if (item.type !== "dialogue" || !item.person) {
             eventContent = <p className="xx-narration">{item.text}</p>;

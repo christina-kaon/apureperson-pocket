@@ -135,21 +135,10 @@ body{background:#05070a}
 .xx-chapter-complete-overlay{position:fixed;z-index:40;inset:0;overflow-y:auto;padding:22vh 0 24px;background:linear-gradient(180deg,rgba(226,238,231,.08),rgba(226,237,230,.68) 22%,rgba(235,241,233,.94));backdrop-filter:blur(4px)}.xx-chapter-complete-overlay .xx-preview-settlement{width:min(430px,calc(100% - 24px));max-height:72dvh;overflow-y:auto;margin:0 auto;padding:22px 18px 16px;border-radius:22px}.xx-chapter-complete-overlay .xx-preview-settlement h1{font-size:27px}.xx-chapter-complete-overlay .xx-preview-settlement>header p{font-size:12px;line-height:1.72}.xx-chapter-complete-overlay .xx-preview-next-objective{margin-top:14px;padding:11px 13px;border-radius:13px}.xx-chapter-complete-overlay .xx-preview-next-objective strong{font-size:12px}.xx-chapter-complete-overlay .xx-preview-content{margin-top:16px}.xx-chapter-complete-overlay .xx-preview-content .xx-story-illustration{margin-right:-18px;margin-left:-18px}.xx-chapter-complete-overlay .xx-preview-content .xx-story-illustration img{aspect-ratio:16/9}.xx-chapter-complete-overlay .xx-hud-card{padding:15px 16px 13px}.xx-chapter-complete-overlay .xx-hud-card h3{font-size:19px}.xx-live-settlement-action{grid-template-columns:1fr}.xx-live-settlement-action button{font-size:12px}.xx-chapter-closing{margin:18px 0 8px;color:#799089;font:10px/1.6 ui-monospace,monospace;letter-spacing:.14em;text-align:center}
 @media(max-width:390px){.xx-preview-topbar{grid-template-columns:82px 1fr 82px;padding:22px 12px 66px}.xx-preview-background{height:430px}.xx-preview-settlement{margin-right:12px;margin-left:12px;padding-right:18px;padding-left:18px}.xx-preview-content .xx-story-illustration{margin-right:-18px;margin-left:-18px}.xx-chapter-complete-overlay{padding-top:20vh}.xx-chapter-complete-overlay .xx-preview-settlement{max-height:76dvh}}
 
-/* V4.6 game-form events */
-.xx-system-event {
-  margin: 14px 0; padding: 10px 14px; border: 1px solid rgba(140, 180, 255, 0.45);
-  border-radius: 10px; background: rgba(70, 100, 160, 0.14);
-  font-size: 14px; letter-spacing: 0.4px; color: #b9d2ff;
-}
-.xx-loot-event {
-  margin: 14px 0; padding: 12px 14px; border: 1px solid rgba(230, 200, 120, 0.5);
-  border-radius: 10px; background: rgba(150, 120, 40, 0.12); color: #f0dfae;
-}
-.xx-loot-event ul { margin: 8px 0 0; padding-left: 18px; }
-.xx-loot-event li { margin: 3px 0; font-size: 14px; }
-.xx-os-event {
-  margin: 14px 0; padding: 10px 14px 12px; border-left: 3px solid rgba(210, 160, 255, 0.6);
-  background: rgba(120, 80, 170, 0.10); border-radius: 0 10px 10px 0;
-}
-.xx-os-event header { font-size: 12px; opacity: 0.75; margin-bottom: 4px; letter-spacing: 1px; }
-.xx-os-event p { margin: 0; font-style: italic; color: #d9c4f2; }
+/* V4.6 game-form events（跟随主题 accent） */
+.xx-system-event{margin:14px 0;padding:10px 14px;border:1px solid color-mix(in srgb,var(--xx-accent) 30%,transparent);border-radius:10px;background:color-mix(in srgb,var(--xx-accent) 7%,#0d1016);color:#cfc9bd;font:12px/1.7 ui-monospace,monospace;letter-spacing:.06em}
+.xx-loot-event{margin:14px 0;padding:12px 14px;border:1px solid color-mix(in srgb,var(--xx-accent) 38%,transparent);border-radius:10px;background:color-mix(in srgb,var(--xx-accent) 5%,#0d1016);color:#ded8ce;font-size:13px}
+.xx-loot-event ul{margin:8px 0 0;padding-left:18px}
+.xx-loot-event li{margin:3px 0;font-size:13px}
+.xx-loot-event li strong{color:var(--xx-accent);font-weight:400}
+.xx-os-inline{color:#9e9b95;font-style:italic}

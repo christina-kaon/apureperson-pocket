@@ -642,6 +642,32 @@ function ensureDivergentChoices(choices: XianxiaChoice[]): XianxiaChoice[] {
   ];
 }
 
+// os 事件并入同角色对白气泡，格式：正常话（os：内心话）；无相邻对白的转为气泡内独立 os 行。
+function inlineOsEvents(events: XianxiaEvent[]): XianxiaEvent[] {
+  const merged: XianxiaEvent[] = [];
+  for (const event of events) {
+    const prev = merged[merged.length - 1];
+    if (event.type === "os" && prev && prev.type === "dialogue" && prev.person === event.person) {
+      prev.text = `${prev.text}（os：${event.text}）`;
+      continue;
+    }
+    merged.push({ ...event });
+  }
+  const out: XianxiaEvent[] = [];
+  for (let i = 0; i < merged.length; i += 1) {
+    const event = merged[i];
+    if (event.type !== "os") { out.push(event); continue; }
+    const next = merged[i + 1];
+    if (next && next.type === "dialogue" && next.person === event.person) {
+      out.push({ ...next, text: `${next.text}（os：${event.text}）` });
+      i += 1;
+      continue;
+    }
+    out.push({ type: "dialogue", person: event.person, text: `（os：${event.text}）` });
+  }
+  return out;
+}
+
 // 旁白里带引号且能锁定说话者的台词，确定性升格为 dialogue 气泡。
 function promoteQuotedSpeech(events: XianxiaEvent[], story: XianxiaStory, present: string[]): XianxiaEvent[] {
   const presentChars = story.characters.filter((c) => present.includes(c.id));
@@ -734,7 +760,7 @@ function normalizeTurn(value: unknown, story: XianxiaStory, present: string[]): 
   }).slice(0, 2);
   if (choices.length !== 2) return null;
   return {
-    events: stripHangingEnding(promoteQuotedSpeech(events, story, present)),
+    events: stripHangingEnding(inlineOsEvents(promoteQuotedSpeech(events, story, present))),
     choices,
     hudDelta: normalizeHudDelta(item.hud_delta),
     storyRouting: storyRoutings.has(item.story_routing as StoryRouting)
