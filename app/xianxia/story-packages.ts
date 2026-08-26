@@ -1294,6 +1294,7 @@ const steadyDao: XianxiaStory = {
 };
 
 export const xianxiaStories: Partial<Record<XianxiaStory["id"], XianxiaStory>> = {
+  "immortal-sister": immortalSister,
   "steady-dao": steadyDao,
 };
 
