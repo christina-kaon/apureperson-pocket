@@ -1,4 +1,4 @@
-import { callStoryModel } from "../../../model-client";
+import { callStoryModel, callStoryModelStream, parseModelJson } from "../../../model-client";
 import {
   getXianxiaStory,
   type XianxiaChapterEndPreview,
@@ -631,6 +631,8 @@ function promptForTurn(args: {
 13. story_routing.guidance只调整NPC提醒的清晰程度。轮数永远不能自动解锁候选，也不能自动完成章节；但玩家持续回避时，世界与有自己目标的NPC仍可依据已经公开的压力行动、邀请或产生合理后果。玩家若明确谈感情，就让关系戏完整发展，不用主线打断；玩家若询问或行动指向主线，就不要假装没听懂。
 14. present_characters中的has_appeared_in_visible_history表示角色是否已经在玩家可见剧情中正式登场。值为false的角色不能直接顶着名字开口：若本轮确有必要让其出现，必须先用一条自然旁白写清他是谁、与玩家是什么关系、以什么可辨识动作进入现场、此刻为何而来，再让其说话；不能写人物简历，也不能假定玩家已经看过导演资料。若本轮不需要他，可以继续不让他出现。
 15. scene_memory中的facts、unresolvedThreads与relationshipNotes是跨轮连续性，不是文风素材。不得否认已经成立的地点、时间、行动结果或关系变化；角色可以对事实的原因和意义有不同理解，但不能集体把已发生的事实说成没发生。
+16. NPC的情绪与叙事反应强度必须与事件对其的实际意义相称：普通寒暄、常规动作和小决定只引起相称的回应，不因玩家身份放大普通互动，不让全场为一句日常话语停摆；高位角色的地位体现为现实影响力，不体现为对玩家居高临下或过度关注的姿态。
+17. 多名角色在场时，本轮回应至少形成两个落点：直接承接者之外，安排一名角色以插话、动作或对第三方的小动作侧面介入；远离话题中心的角色可用一笔背景动作保持在场。任何单一关系不得连续多轮独占叙事焦点；新引入的人物必须带来实际作用（信息、牵制或新的关系接口），不做背景板。私密或封闭场景不适用本条。
 
 文风：
 ${story.styleProfile}
@@ -650,7 +652,7 @@ ${JSON.stringify(runtimePacket)}
 - story_routing=follow时，按玩家真正关心的事继续；可以整轮谈情、闲逛、生活、修炼或调查旁支，也可以只是把当前相处自然演深，不强制每轮关系升级。不得偷用storybook_candidates里的新信息。
 - story_routing=echo时只写已经公开线索造成的环境或情绪回声；invite时由有动机的NPC提出一件自然可拒绝的邀请，邀请后仍要继续生活和关系互动，不能把玩家塞进任务菜单。
 - story_routing=trigger时，只把activated_candidate对应内容演成一个主要正史变化；先在events中完整发生，不能首次塞进choice。若有completion_evidence，正文必须给出可见证据。story_routing=diverge时，忠实承接玩家造成的新条件，只保留候选的戏剧功能，不保留与现状冲突的预设过程与结果。
-- 对话像具体关系中的真人，允许NPC自己打断、改口、嘴硬、答非所问和连续补话；这些词描述NPC的可见表演，不得反向套给玩家。所有人物行动、反应、停顿、沉默、神情、空间和物件变化都写进narration，不输出action或reaction event。NPC问另一名NPC时，必须让被问者先以对白、动作、沉默拒绝或其他可见方式回应，不能在半截NPC对话处收尾；可以把问题交给玩家等待回答，也可以停在众人已经决定并准备行动的临界点。不要把两个choices预演成NPC口中的二选一，禁止用“你要A还是B”“是A还是B”“该A还是B”作为惯常末句。若scene_memory.lastClosingMode为question，本轮最后一个event不得再次用直接问句或等待回答收尾；即使上一轮不是question，也只有当前关系或行动确实需要玩家立即答复时才能用问句。其他回合优先落在已经发生的动作、发现、关系反应或局面变化上；两种方向只写进choices。
+- 对话像具体关系中的真人，允许NPC自己打断、改口、嘴硬、答非所问和连续补话；这些词描述NPC的可见表演，不得反向套给玩家。所有人物行动、反应、停顿、沉默、神情、空间和物件变化都写进narration，不输出action或reaction event。NPC问另一名NPC时，必须让被问者先以对白、动作、沉默拒绝或其他可见方式回应，不能在半截NPC对话处收尾；可以把问题交给玩家等待回答，也可以停在众人已经决定并准备行动的临界点。不要把两个choices预演成NPC口中的二选一，禁止用“你要A还是B”“是A还是B”“该A还是B”作为惯常末句。若scene_memory.lastClosingMode为question，本轮最后一个event不得再次用直接问句或等待回答收尾；即使上一轮不是question，也只有当前关系或行动确实需要玩家立即答复时才能用问句。其他回合优先落在已经发生的动作、发现、关系反应或局面变化上；两种方向只写进choices。结尾不得描写角色等待玩家回应、观察玩家反应或把决定权悬停给玩家（"他等待着你的回答""等着你的决定"类语义一律违规）；非问句结尾必须停在玩家以外角色的行为、对白或环境变化上，为下一轮留下自然牵引。
 - chapter_complete不是“素材用完”或“聊够轮数”。只有scene.completion_signals每一项都已经在可见正文和scene_memory中有具体依据时才可为true；输出前在内部逐项核对，任一项缺失即为false。允许玩家用预设以外的方法达成，也允许拒绝原目标后以有代价的新局面结束本章。正文可以把问题明确交给玩家，也可以停在众人准备行动的临界点，但不能停在某NPC问另一个NPC而对方尚未作任何回应的半截对话。结算卡只展示结果，不能替正文补尾。
 - 正文中不要使用角色ID、字段名、世界书条目、goal、pressure、关系焦点等导演术语。
 - 恰好两个choices，每项8至24个中文字符，kind独立取speech或action；两项都是玩家此刻能直接做出的、方向实质相反的言行，不加“你/玩家/动作：”前缀，不泄露正文尚未公开的信息。选项依据当前能力、处境和已表现行为生成；最多一项可以呼应optional_baseline_tendency，另一项必须保留合理的反向选择，不能借选项把玩家性格定死。
@@ -668,19 +670,124 @@ ${JSON.stringify(runtimePacket)}
 {"story_routing":"follow","activated_candidate":null,"chapter_complete":false,"events":[{"type":"narration","text":"现场正文"},{"type":"dialogue","person":"present角色id","text":"说出口的话"}],"choices":[{"kind":"speech","text":"玩家言行"},{"kind":"action","text":"相反方向言行"}],"hud_delta":{"steadiness":0,"jiujiu_affection":0,"lan_affection":0,"cultivation":0},"scene_delta":{"time":null,"location":null,"facts_added":[],"facts_resolved":[],"threads_opened":[],"threads_resolved":[],"relationship_notes":[],"closing_mode":"action"}}`;
 }
 
+type TurnBody = {
+  storyId?: string;
+  input?: string;
+  inputKind?: string;
+  fromChoice?: boolean;
+  history?: unknown;
+  state?: ClientState;
+  stream?: boolean;
+};
+
+type StreamedEvent = { type: string; person?: string; text: string };
+
+// V4.4：从生成中的 JSON 文本里增量提取 events 数组中已闭合的事件对象
+function extractClosedEvents(text: string): StreamedEvent[] {
+  const key = text.indexOf('"events"');
+  if (key < 0) return [];
+  const arrayStart = text.indexOf("[", key);
+  if (arrayStart < 0) return [];
+  const events: StreamedEvent[] = [];
+  let index = arrayStart + 1;
+  while (index < text.length) {
+    while (index < text.length && text[index] !== "{" && text[index] !== "]") index += 1;
+    if (index >= text.length || text[index] === "]") break;
+    const objectStart = index;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let objectEnd = -1;
+    for (let cursor = objectStart; cursor < text.length; cursor += 1) {
+      const character = text[cursor];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (character === "\\") escaped = true;
+        else if (character === '"') inString = false;
+        continue;
+      }
+      if (character === '"') inString = true;
+      else if (character === "{") depth += 1;
+      else if (character === "}") {
+        depth -= 1;
+        if (depth === 0) { objectEnd = cursor; break; }
+      }
+    }
+    if (objectEnd < 0) break;
+    try {
+      const parsed = JSON.parse(text.slice(objectStart, objectEnd + 1)) as StreamedEvent;
+      if (parsed && typeof parsed.text === "string" && (parsed.type === "narration" || parsed.type === "dialogue")) {
+        events.push(parsed);
+      }
+    } catch { /* 未闭合或坏对象：跳过 */ }
+    index = objectEnd + 1;
+  }
+  return events;
+}
+
+// V4.4：近史分层裁剪——最新 2 个玩家回合全文，再前 2 个回合只留对白与叙述首句
+function tierHistory(history: HistoryEntry[]): HistoryEntry[] {
+  const rounds: HistoryEntry[][] = [];
+  let current: HistoryEntry[] = [];
+  for (const entry of history) {
+    if (entry.kind === "player" && current.length) { rounds.push(current); current = []; }
+    current.push(entry);
+  }
+  if (current.length) rounds.push(current);
+  const kept = rounds.slice(-4);
+  const fullFrom = Math.max(0, kept.length - 2);
+  return kept.flatMap((round, roundIndex) => {
+    if (roundIndex >= fullFrom) return round;
+    return round.map((entry) => {
+      if (entry.kind === "player" || entry.type === "dialogue" || typeof entry.text !== "string") return entry;
+      const firstSentence = entry.text.split(/(?<=[。！？])/)[0] ?? entry.text;
+      return { ...entry, text: firstSentence.length > 60 ? firstSentence.slice(0, 60) + "…" : firstSentence };
+    });
+  });
+}
+
+class XianxiaTurnError extends Error {
+  status: number;
+  constructor(message: string, status: number) { super(message); this.status = status; }
+}
+
 export async function POST(request: Request) {
+  let body: TurnBody;
   try {
-    const body = await request.json() as {
-      storyId?: string;
-      input?: string;
-      inputKind?: string;
-      fromChoice?: boolean;
-      history?: unknown;
-      state?: ClientState;
-    };
+    body = await request.json() as TurnBody;
+  } catch {
+    return Response.json({ error: "invalid_json_body" }, { status: 400 });
+  }
+  if (body.stream === true) {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        const emit = (frame: unknown) => controller.enqueue(encoder.encode(JSON.stringify(frame) + "\n"));
+        try {
+          const payload = await runXianxiaTurn(body, (event) => emit({ type: "event", event }));
+          emit({ type: "final", payload });
+        } catch (error) {
+          emit({ type: "error", error: error instanceof Error ? error.message : "xianxia_turn_failed" });
+        }
+        controller.close();
+      },
+    });
+    return new Response(stream, {
+      headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-cache" },
+    });
+  }
+  try {
+    return Response.json(await runXianxiaTurn(body));
+  } catch (error) {
+    const status = error instanceof XianxiaTurnError ? error.status : 502;
+    return Response.json({ error: error instanceof Error ? error.message : "xianxia_turn_failed" }, { status });
+  }
+}
+
+async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) => void) {
     const story = getXianxiaStory(body.storyId);
     const input = body.input?.trim();
-    if (!story || !input) return Response.json({ error: "story_or_input_missing" }, { status: 400 });
+    if (!story || !input) throw new XianxiaTurnError("story_or_input_missing", 400);
 
     const segmentIndex = Math.min(finiteIndex(body.state?.segmentIndex), story.segments.length - 1);
     let materialIndex = finiteIndex(body.state?.materialIndex, 1);
@@ -696,7 +803,7 @@ export async function POST(request: Request) {
     materialIndex = firstUnusedIndex < 0 ? segment.materials.length : firstUnusedIndex;
     const baseSceneMemory = cleanSceneMemory(body.state?.sceneMemory, segment.location);
     const explicitFreeformEnding = /离开|留下|改革|接任|接过|拒绝|带.{0,6}走|一起走|重建|解散/.test(input);
-    const history = cleanHistory(body.history);
+    const history = tierHistory(cleanHistory(body.history));
     const inputKind = body.inputKind === "action" || body.inputKind === "speech" ? body.inputKind : "freeform";
     const assertedLocation = inferAssertedLocation(input, inputKind);
     const sceneMemory = assertedLocation
@@ -728,20 +835,45 @@ export async function POST(request: Request) {
       }));
     const perception = buildPerceptionPacket(input, inputKind, segment.present);
 
-    const raw = await callStoryModel(
-        promptForTurn({
-          story,
-          input,
-          inputKind,
-          history,
-          segmentIndex,
-          storybookCandidates,
-          perception,
-          turnsSinceMaterial,
-          hud,
-          chapterHandoff: body.state?.chapterHandoff,
-          sceneMemory,
-        }),
+    const turnPrompt = promptForTurn({
+      story,
+      input,
+      inputKind,
+      history,
+      segmentIndex,
+      storybookCandidates,
+      perception,
+      turnsSinceMaterial,
+      hud,
+      chapterHandoff: body.state?.chapterHandoff,
+      sceneMemory,
+    });
+    // V4.4 流式：首发尝试用流式调用并逐个下发已闭合 event；
+    // 解析或校验失败时回落到原有 callStoryModel 全套修复/换模机器（质量路径不变）。
+    let raw: unknown = null;
+    if (onEvent) {
+      try {
+        let emittedCount = 0;
+        const streamedText = await callStoryModelStream(
+          turnPrompt,
+          "生成本轮仙侠互动场景，只输出JSON。",
+          0.62,
+          5600,
+          { requestTimeoutMs: 45000 },
+          (fullText) => {
+            const closed = extractClosedEvents(fullText);
+            for (; emittedCount < closed.length; emittedCount += 1) onEvent(closed[emittedCount]);
+          },
+        );
+        const parsed = parseModelJson(streamedText);
+        if (normalizeTurn(parsed, story, segment.present)) raw = parsed;
+      } catch {
+        raw = null;
+      }
+    }
+    if (raw === null) {
+      raw = await callStoryModel(
+        turnPrompt,
         "生成本轮仙侠互动场景，只输出JSON。",
         0.62,
         5600,
@@ -753,6 +885,7 @@ export async function POST(request: Request) {
             : { ok: false, reason: "xianxia_turn_shape_invalid" },
         },
       );
+    }
     const result = normalizeTurn(raw, story, segment.present);
     if (!result) throw new Error("prompt3_shape_invalid_after_validation");
     const proposedHudDelta = result.hudDelta ?? fallbackHudDelta(input);
@@ -809,7 +942,7 @@ export async function POST(request: Request) {
         ? { ...nextStateBase, chapterHandoff: body.state.chapterHandoff }
         : nextStateBase;
 
-    return Response.json({
+    return {
       events: result.events,
       choices: result.choices,
       source: "model",
@@ -821,8 +954,5 @@ export async function POST(request: Request) {
       mediaCues: materialCommitted && activatedCandidate && result.storyRouting === "trigger"
         ? story.mediaCues?.[activatedCandidate.id] ?? []
         : [],
-    });
-  } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "xianxia_turn_failed" }, { status: 502 });
-  }
+    };
 }

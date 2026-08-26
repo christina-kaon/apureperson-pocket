@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
+import XianxiaPage from "./xianxia/page";
 
 export default function HomePage() {
-  redirect("/xianxia");
+  return <XianxiaPage />;
 }
