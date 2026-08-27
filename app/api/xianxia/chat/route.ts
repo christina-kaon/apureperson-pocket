@@ -830,6 +830,8 @@ function normalizeTurn(value: unknown, story: XianxiaStory, present: string[]): 
     return [{ type: "dialogue", person, text }];
   }).slice(0, 9);
   if (events.length < 5) return null;
+  const totalEventChars = events.reduce((sum, event) => sum + [...(event.text ?? "")].length, 0);
+  if (totalEventChars < 650) return null;
 
   const choices = item.choices.flatMap((raw): XianxiaChoice[] => {
     if (!raw || typeof raw !== "object") return [];
@@ -1049,7 +1051,7 @@ ${JSON.stringify(runtimePacket)}
 玩家本轮明确提交：${JSON.stringify(input)}
 
 生成规则：
-- 输出5至9个按真实时间连续的events；每轮正文合计800至1500个中文字符（普通轮800-1100，重场面1100-1500），不用重复、排比、总结凑字。对白必须拆碎：单条dialogue以一两句话为宜（一般不超过60字），同一角色可以在一轮内多次开口、被打断、接话、补一句；严禁让任何角色一次性说一大段台词，长内容拆成多条气泡与动作narration交替。
+- 输出5至9个按真实时间连续的events；每轮正文合计800至1500个中文字符（普通轮800-1100，重场面1100-1500），合计不足800字即为不合格输出。玩家输入再短，世界的这一拍也要完整：用人物各自的小动作、环境变化和角色间互动把体量做足，不用重复、排比、总结凑字。对白必须拆碎：单条dialogue以一两句话为宜（一般不超过60字），同一角色可以在一轮内多次开口、被打断、接话、补一句；严禁让任何角色一次性说一大段台词，长内容拆成多条气泡与动作narration交替。
 - 前两个events内让真正听见或看见的人具体承接玩家输入，不复述后立刻转移话题。
 - NPC回应的是玩家这一次实际说了什么、做了什么以及它造成的可见变化，不是角色模板。玩家沉默不自动等于隐瞒，含糊不自动等于装傻，拒绝不自动等于嘴硬，突然冒险也不能被改写成“仍在稳健布局”。既有声誉只能造成期待或反差，不能覆盖当下表现。
 - 玩家必须是场面的行动中心：NPC的判断、请求、试探、照顾或阻拦要落到“你现在能决定什么”。
