@@ -1360,12 +1360,15 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
       try {
         let emittedCount = 0;
         const streamProcessor = onEvent ? createStreamEventProcessor(story, segment.present, onEvent) : null;
+        const writerModel = typeof (body as { writerModel?: string }).writerModel === "string"
+          ? (body as { writerModel?: string }).writerModel
+          : undefined;
         const streamedText = await callStoryModelStream(
           turnPrompt,
           "生成本轮仙侠互动场景，只输出JSON。",
           0.62,
           5600,
-          { requestTimeoutMs: 45000 },
+          { requestTimeoutMs: 60000, ...(writerModel ? { primaryModel: writerModel } : {}) },
           (fullText) => {
             const closed = extractClosedEvents(fullText);
             for (; emittedCount < closed.length; emittedCount += 1) streamProcessor?.push(closed[emittedCount] as XianxiaEvent);
@@ -1391,7 +1394,8 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
           5600,
           {
             stage: "prompt3",
-            requestTimeoutMs: 36000,
+            requestTimeoutMs: 60000,
+            ...((body as { writerModel?: string }).writerModel ? { primaryModel: (body as { writerModel?: string }).writerModel } : {}),
             validate: (value) => {
               const turn = normalizeTurn(value, story, segment.present);
               if (!turn) return { ok: false, reason: "xianxia_turn_shape_invalid" };
