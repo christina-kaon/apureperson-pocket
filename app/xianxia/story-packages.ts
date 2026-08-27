@@ -24,6 +24,7 @@ export type XianxiaCharacter = {
   performanceCore: string;
   privateGoal: string;
   secret?: string;
+  persona?: { surface: string; coreWant: string; bedrock: string };
   firstAppearance: string;
   featured?: boolean;
 };
@@ -119,6 +120,7 @@ export type XianxiaStory = {
   relationships: Array<{ id: string; roles: string[]; public: string; tension: string }>;
   worldProcesses?: Array<{ id: string; title: string; stage: string; note: string }>;
   npcRelationSeeds?: Array<{ pair: [string, string]; warmth: number; tension: number; note: string }>;
+  npcStateSeeds?: Record<string, { mood: string; stanceToPlayer: string }>;
   opening: {
     events: XianxiaEvent[];
     choices: XianxiaChoice[];
@@ -255,6 +257,7 @@ const immortalSister: XianxiaStory = {
       storyCore: "镇守北境的剑尊，战力极高但受宗门议事规则制约。底线是不让年轻人替旧制度送命。",
       performanceCore: "温柔、有趣、带一点大姐姐式促狭；一本正经地说小事，会记得你的饮食、旧伤和少年糗事。受伤时先照顾别人，不写成冰冷仙子。",
       privateGoal: "查清灵矿与剑冢账目，在不惊动既得利益者的情况下把你留在危险之外。",
+      persona: { surface: "师姐式促狭与照顾：拿旧事打趣、递茶先试温、把危险轻描淡写；人前永远是滴水不漏的剑尊仪态。", coreWant: "在不把你卷进宗门清算的前提下查清矿契与剑冢的账；也想被你当成可以并肩的人，而不是需要仰望的师姐。", bedrock: "护短到近乎固执的责任心——可以自损，不能看着身边人替旧制度买单。" },
       secret: "左臂旧伤与私改矿契的真相都瞒着你：她多年替矿民减债、暗查剑冢账目，说破就会把你卷进宗门清算；被问到伤时惯用玩笑岔开。",
       firstAppearance: "从洗剑池回来，在白日院落里先拿太初剑会不会选你打趣，再用替你试茶温的小动作暴露伤势。",
     },
@@ -267,6 +270,7 @@ const immortalSister: XianxiaStory = {
       storyCore: "负责宗门内务与大典秩序，擅长制度、舆论和分配人情。底线是不能失去秩序继承人的位置。",
       performanceCore: "从不在人前失态；每句帮助都留着退路，每次关心都能成为日后的证词。聪明而危险，不为推动剧情降智。",
       privateGoal: "让你在授剑大典前失去资格，同时让所有人相信他已经尽力保护了你。",
+      persona: { surface: "温文尔雅的周全人：每句关心都恰到好处，从不在人前失态。", coreWant: "在不留把柄的前提下拿回被你打乱的继承秩序；需要所有人相信他是最尽力保护你的人。", bedrock: "对失控的恐惧——宁可算计到冷酷，也不允许局面脱离自己的手。" },
       secret: "构陷你的整套安排（复制剑息、副印指令、住处栽赃）绝不能被任何人串起来；他最怕桑迟与名册流向被同时核对，被逼近时会抢先给你更体面的保护。",
       firstAppearance: "亲自带来太初剑台失窃的消息，先替闻照雪按住被风卷起的候选名册，再请所有在场者一同核对时间。",
     },
@@ -279,6 +283,7 @@ const immortalSister: XianxiaStory = {
       storyCore: "能接触大典名册、灯房与礼殿杂务，无权进入剑冢。遇到危险先退半步，但不会丢下真的需要帮助的人。",
       performanceCore: "嘴快、容易紧张，会在错误时机说实话；幽默来自求生欲与现场现实的落差。",
       privateGoal: "平安熬过授剑大典，也想证明自己不只是一个传话的人。",
+      persona: { surface: "嘴快心慌的小文书：先赔笑、爱转移话题、总在错误时机说实话。", coreWant: "想被两位天才当成自己人而不只是跑腿的；名册的事像块石头压着他。", bedrock: "小人物的义气——真到要害处，怕成筛子也不会出卖朋友。" },
       secret: "错送名册的指令来自裴行舟的副印，他隐约觉得不对却不敢说；心虚让他在两人对峙时话更多、更急着帮你。",
       firstAppearance: "抱着礼单、封金帖和蘸好朱砂的笔在院中忙得团团转，被闻照雪一句话拆穿他早就偷听到了换防风声。",
     },
@@ -291,6 +296,7 @@ const immortalSister: XianxiaStory = {
       storyCore: "熟悉灵矿劳役、矿账和山下人的生存方式，是旧制度代价的活证人。",
       performanceCore: "少讲大道理，用价钱、天气、伤病和一碗饭判断人；关心别人时总假装是在算账。",
       privateGoal: "保住面铺和身边矿工，也想让多年死伤终于被山上的人看见。",
+      persona: { surface: "只谈价钱和天气的面铺老板，关心人也装作是在算账。", coreWant: "保住铺子和矿工，也想让山上有人真正看一眼这些年的死伤账。", bedrock: "用沉默扛事的旧派担当——账本底页那份名单比命重。" },
       secret: "面铺账本底页记着历年矿难死者名单和他没能救下的人；他装作只关心生意，最怕别人翻他的账。",
       firstAppearance: "看见你在雨里饿得站不稳，先问能不能劈柴，再把热面推过来。",
     },
@@ -303,6 +309,7 @@ const immortalSister: XianxiaStory = {
       storyCore: "能带你进入废矿与古祠，知道矿工失踪和邪修收取灵税的路线。",
       performanceCore: "说话快，爱拆穿漂亮话；害怕时会先数退路，决定帮忙后反而最敢往前走。",
       privateGoal: "找到失踪的兄长，并让矿镇不再替仙门繁荣支付看不见的代价。",
+      persona: { surface: "说话快、爱拆穿漂亮话，帮忙之前先数退路。", coreWant: "找到兄长下落，也在掂量你值不值得托付那半枚矿牌。", bedrock: "决定信一个人之后，就敢把命押上的狠劲。" },
       secret: "兄长失踪前留给她半枚矿牌，与你行囊里那枚是一对；确认你可信之前她绝不拿出来。",
       firstAppearance: "用药篓挡住你去路，先检查你手上的茧，再决定要不要相信你。",
     },
@@ -314,6 +321,7 @@ const immortalSister: XianxiaStory = {
       storyCore: "掌握废矿入口与部分矿契往来，是裴行舟利益链伸到人间的中间人。",
       performanceCore: "不狂笑、不自报阴谋；先讲规矩和欠账，只有占尽便宜时才露出轻蔑。",
       privateGoal: "守住矿契与古祠秘密，把所有责任推给失去宗籍的散修。",
+      persona: { surface: "拿着文书说话的收税官，客气里带着威胁。", coreWant: "多捞快捞、别被上面查账，嗅到风向不对就先找垫背的。", bedrock: "彻底的利己——压力够大时第一反应永远是出卖上线保自己。" },
       secret: "他收的灵税有三成进了自己腰包，副印文书是真的、账目是假的；最怕上面派人对账，被戳穿时会先出卖上线自保。",
       firstAppearance: "带着盖有仙门外务印的收税文书来到面铺，把勒索说成一次例行核验。",
       featured: false,
@@ -332,6 +340,14 @@ const immortalSister: XianxiaStory = {
     { id: "proc_taichu", title: "太初剑失窃案的宗门调查", stage: "起", note: "剑冢外阵的残纹已被封存，戒律殿开始逐一排查当夜值守名册。" },
     { id: "proc_mining", title: "北境矿契的暗流", stage: "起", note: "矿镇灵税再度加征的文书正在内务堂流转，尚未公开。" },
   ],
+  npcStateSeeds: {
+    wen_zhaoxue: { mood: "惦记着晨间剑冢方向的异样", stanceToPlayer: "亲近" },
+    pei_xingzhou: { mood: "表面从容，内里绷着大典每个环节", stanceToPlayer: "试探" },
+    sang_chi: { mood: "被名册和杂务追着跑", stanceToPlayer: "松动" },
+    chen_bo: { mood: "照常开铺，留意着街面动静", stanceToPlayer: "试探" },
+    a_ruo: { mood: "心里悬着兄长的事", stanceToPlayer: "戒备" },
+    lu_kui: { mood: "惦记着这个月的税额", stanceToPlayer: "戒备" },
+  },
   opening: {
     usedMaterialId: "immortal_ch01_s01_m01",
     choices: [

@@ -93,6 +93,7 @@ type ClientState = {
   inventory?: Array<{ name: string; qty: number; note?: string }>;
   npcBelongings?: Record<string, Array<{ name: string; qty: number; note?: string }>>;
   npcRelations?: Array<{ pair: [string, string]; warmth: number; tension: number; note: string }>;
+  npcStates?: Record<string, { mood: string; stanceToPlayer: string; recentPatterns: string[] }>;
 };
 
 type StoryRouting = "follow" | "echo" | "invite" | "trigger" | "diverge";
@@ -562,6 +563,53 @@ function mergeNpcBelongings(base: Record<string, LedgerItem[]>, updates: unknown
   return out;
 }
 
+type NpcState = { mood: string; stanceToPlayer: string; recentPatterns: string[] };
+
+const stanceStages = ["戒备", "试探", "松动", "亲近", "裂痕"];
+
+function cleanNpcStates(value: unknown, story: XianxiaStory, present: string[]): Record<string, NpcState> {
+  const out: Record<string, NpcState> = {};
+  const raw = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  for (const id of present) {
+    const item = raw[id] && typeof raw[id] === "object" ? raw[id] as Record<string, unknown> : null;
+    const seed = story.npcStateSeeds?.[id];
+    out[id] = {
+      mood: typeof item?.mood === "string" && item.mood.trim() ? compactText(String(item.mood), 30) : (seed?.mood ?? "如常"),
+      stanceToPlayer: typeof item?.stanceToPlayer === "string" && item.stanceToPlayer.trim() ? compactText(String(item.stanceToPlayer), 12) : (seed?.stanceToPlayer ?? "试探"),
+      recentPatterns: Array.isArray(item?.recentPatterns) ? (item.recentPatterns as unknown[]).flatMap((p) => typeof p === "string" ? [compactText(p, 16)] : []).slice(-2) : [],
+    };
+  }
+  // 非在场角色的状态原样保留（跨段落回归时不丢）
+  for (const [id, item] of Object.entries(raw)) {
+    if (out[id] || !item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    out[id] = {
+      mood: typeof record.mood === "string" ? compactText(record.mood, 30) : "如常",
+      stanceToPlayer: typeof record.stanceToPlayer === "string" ? compactText(record.stanceToPlayer, 12) : "试探",
+      recentPatterns: Array.isArray(record.recentPatterns) ? (record.recentPatterns as unknown[]).flatMap((p) => typeof p === "string" ? [compactText(p, 16)] : []).slice(-2) : [],
+    };
+  }
+  return out;
+}
+
+function applyNpcStateUpdates(current: Record<string, NpcState>, updates: unknown): Record<string, NpcState> {
+  const out: Record<string, NpcState> = {};
+  for (const [id, state] of Object.entries(current)) out[id] = { ...state, recentPatterns: [...state.recentPatterns] };
+  if (!Array.isArray(updates)) return out;
+  for (const raw of updates.slice(0, 6)) {
+    if (!raw || typeof raw !== "object") continue;
+    const item = raw as Record<string, unknown>;
+    if (typeof item.id !== "string" || !out[item.id]) continue;
+    const target = out[item.id];
+    if (typeof item.mood === "string" && item.mood.trim()) target.mood = compactText(item.mood, 30);
+    if (typeof item.stance_to_player === "string" && stanceStages.includes(item.stance_to_player)) target.stanceToPlayer = item.stance_to_player;
+    if (typeof item.pattern === "string" && item.pattern.trim()) {
+      target.recentPatterns = [...target.recentPatterns, compactText(item.pattern, 16)].slice(-2);
+    }
+  }
+  return out;
+}
+
 const processStages = ["起", "承", "转", "合"];
 type WorldProcess = { id: string; title: string; stage: string; note: string };
 
@@ -811,6 +859,7 @@ function promptForTurn(args: {
   inventory?: LedgerItem[];
   npcBelongings?: Record<string, LedgerItem[]>;
   npcRelations?: NpcRelation[];
+  npcStates?: Record<string, NpcState>;
 }) {
   const {
     story,
@@ -831,6 +880,7 @@ function promptForTurn(args: {
     inventory = [],
     npcBelongings = {},
     npcRelations = [],
+    npcStates = {},
   } = args;
   const segment = story.segments[segmentIndex];
   const presentCharacters = story.characters
@@ -842,6 +892,8 @@ function promptForTurn(args: {
       performance_core: character.performanceCore,
       private_goal: character.privateGoal,
       secret: character.secret,
+      persona: character.persona ?? null,
+      current_state: (npcStates ?? {})[character.id] ?? null,
       first_appearance: character.firstAppearance,
       has_appeared_in_visible_history: history.some((entry) =>
         entry.person === character.id || Boolean(entry.text?.includes(character.name))
@@ -907,7 +959,7 @@ function promptForTurn(args: {
     player_inventory: { usage: "玩家背包账本。获得/失去物品用loot事件呈现并在scene_delta.items_gained/items_lost登记；账本内容跨轮一致，不得凭空消失。", items: inventory },
     npc_belongings: { usage: "NPC随身物品账本。玩家首次查看/偷看某NPC物品时现场生成合理内容并在scene_delta.npc_belongings_updates整表登记；已登记的下次必须一致。", records: npcBelongings },
     npc_relations: { usage: "NPC之间的情感账本（warmth亲近0-100/tension张力0-100）。他们彼此的语气、袒护、拆台应与当前值相称；本轮NPC间互动造成变化时在scene_delta.npc_relation_updates汇报增减（-5到+5）。", pairs: npcRelations },
-    ...(directorBeat ? { director_beat: { usage: "隐藏导演对本轮的拍板：正文应承接beat_goal与on_stage分配，结尾落在closing_direction指向的具体动作或变化上；若拍板与正史或玩家本轮实际行动冲突，以正史与玩家行动优先。", ...directorBeat } } : {}),
+    ...(directorBeat ? { director_beat: { usage: "隐藏导演对本轮的拍板：正文按beat_outline节点顺序推进——变化节点写足、过渡节点从简，本轮核心变化在中部节点完成，不得把全部变化堆到结尾；每名角色的表现依其persona三层与current_state（mood/stance）落笔，不复读recent_patterns里的旧反应模式；结尾落在closing_direction指向的具体钩子上。若拍板与正史或玩家本轮实际行动冲突，以正史与玩家行动优先。", ...directorBeat } } : {}),
     recent_visible_events: history,
     scene_memory: sceneMemory,
     player_perception: perception,
@@ -1175,6 +1227,7 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
       .filter((r) => !r.roles.includes(story.playerRole.id) && r.roles.length === 2)
       .map((r) => ({ pair: [r.roles[0], r.roles[1]] as [string, string], warmth: 55, tension: 35, note: compactText(r.tension, 80) })));
     const npcRelations = cleanNpcRelations(body.state?.npcRelations, npcRelationSeeds);
+    const npcStates = cleanNpcStates(body.state?.npcStates, story, segment.present);
 
     // P3-A 隐藏导演：短结构化拍板；失败时优雅回落为单调用直出。
     let directorBeat: Record<string, unknown> | null = null;
@@ -1189,7 +1242,14 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
         perception,
         present_characters: story.characters
           .filter((character) => segment.present.includes(character.id))
-          .map((character) => ({ id: character.id, name: character.name, private_goal: character.privateGoal, secret: character.secret })),
+          .map((character) => ({
+            id: character.id,
+            name: character.name,
+            private_goal: character.privateGoal,
+            secret: character.secret,
+            persona: character.persona ?? null,
+            current_state: npcStates[character.id] ?? null,
+          })),
         relationships: story.relationships.filter((relationship) => relationship.roles.every((role) => presentOrPlayerIds.has(role))),
         storybook_candidates: storybookCandidates.map(({ id: _id, ...candidate }) => candidate),
         world_processes: worldProcesses,
@@ -1198,7 +1258,7 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
         npc_relations: npcRelations,
         recent_history: history.slice(-8),
       };
-      const directorSystem = `你是互动仙侠故事的隐藏导演。不写玩家可见正文，不输出思维链，只为当前一拍输出一个JSON拍板。原则：先承认玩家本轮已造成的有效变化；只选真正相关的0-3名角色上场；角色行为由其private_goal、secret与关系张力决定；玩家引入新事物时定下其来源、限度与代价；world_processes只作机会性推进；encounter_beat.must_introduce为true时必须安排一个与玩家当前活动相关的带目的进场。满足优先：玩家索取的体验（读心心声/数值/面板清单）直接给足；storybook_candidates只是隐藏参考，玩家未指向主线时不选invite、不安排主线人物打断玩家当前玩法。os_assignments给0-2名本轮有内心戏价值的角色（口嫌体正直、表里反差优先），不逢人配OS。玩家做偷窃/暗中行动等风险动作时，你按关系、情境与戏剧性裁定成、败或被抓个半截（loot_hint写结果）。npc_interaction可指定一对NPC本轮发生不经过玩家的互动及其性质（依npc_relations当前值：warmth低互相带刺、tension高正面冲突）。只输出JSON：{"beat_type":"relationship|daily|exploration|conflict|reveal|aftermath|world_event","beat_goal":"一句话","story_routing":"follow|echo|invite|trigger|diverge","on_stage":["角色id"],"npc_motives":[{"id":"","want":"","behavior":""}],"world_change":null,"process_moves":[{"id":"","advance":false,"note":""}],"introduce_encounter":null,"closing_direction":"本轮结尾必须落在的具体钩子（新异动/未完动作/他人反应/环境变化，能自然勾出玩家下一步，不许平收）","word_budget":900,"os_assignments":[{"id":"","tone":""}],"loot_hint":null,"npc_interaction":null}`;
+      const directorSystem = `你是互动仙侠故事的隐藏导演。不写玩家可见正文，不输出思维链，只为当前一拍输出一个JSON拍板。原则：先承认玩家本轮已造成的有效变化；只选真正相关的0-3名角色上场；角色行为由其private_goal、secret与关系张力决定；玩家引入新事物时定下其来源、限度与代价；world_processes只作机会性推进；encounter_beat.must_introduce为true时必须安排一个与玩家当前活动相关的带目的进场。满足优先：玩家索取的体验（读心心声/数值/面板清单）直接给足；storybook_candidates只是隐藏参考，玩家未指向主线时不选invite、不安排主线人物打断玩家当前玩法。os_assignments给0-2名本轮有内心戏价值的角色（口嫌体正直、表里反差优先），不逢人配OS。每名上场角色的visible_behavior必须依据其persona三层（surface外壳/core_want诉求/bedrock底色）与current_state（mood/stance_to_player）生成，且不得与其recent_patterns里的模式同轴——连续两轮同一种反应即为违规，换一个反应面。npc_state_updates汇报本轮互动造成的状态变化（mood可自由写，stance_to_player只能取戒备/试探/松动/亲近/裂痕且一次至多移一档，pattern用2-6字概括该角色本轮反应模式）。beat_outline把本轮编排成3-4个节点（stage取承接/发展/转/落）：本轮的核心变化（信息更新/关系位移/局面改变）必须落在中部节点而不是结尾；日常过渡节点从简，变化节点写足。玩家做偷窃/暗中行动等风险动作时，你按关系、情境与戏剧性裁定成、败或被抓个半截（loot_hint写结果）。npc_interaction可指定一对NPC本轮发生不经过玩家的互动及其性质（依npc_relations当前值：warmth低互相带刺、tension高正面冲突）。只输出JSON：{"beat_type":"relationship|daily|exploration|conflict|reveal|aftermath|world_event","beat_goal":"一句话","story_routing":"follow|echo|invite|trigger|diverge","on_stage":["角色id"],"npc_motives":[{"id":"","want":"","behavior":""}],"world_change":null,"process_moves":[{"id":"","advance":false,"note":""}],"introduce_encounter":null,"closing_direction":"本轮结尾必须落在的具体钩子（新异动/未完动作/他人反应/环境变化，能自然勾出玩家下一步，不许平收）","word_budget":900,"os_assignments":[{"id":"","tone":""}],"loot_hint":null,"npc_interaction":null,"beat_outline":[{"stage":"承接|发展|转|落","note":"该节点一句话"}],"npc_state_updates":[{"id":"","mood":"","stance_to_player":"","pattern":""}]}`;
       const rawBeat = await callStoryModel(directorSystem, JSON.stringify(directorPacket), 0.5, 700);
       const parsedBeat = typeof rawBeat === "string" ? parseModelJson(rawBeat) : rawBeat;
       if (parsedBeat && typeof parsedBeat === "object") directorBeat = parsedBeat as Record<string, unknown>;
@@ -1225,6 +1285,7 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
       inventory,
       npcBelongings,
       npcRelations,
+      npcStates,
       sceneMemory,
     });
     // V4.4 流式：首发尝试用流式调用并逐个下发已闭合 event；
@@ -1278,6 +1339,7 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
     const nextInventory = mergeInventory(inventory, [...cleanItems(result.sceneDelta.itemsGained, 8), ...lootFromEvents], result.sceneDelta.itemsLost);
     const nextNpcBelongings = mergeNpcBelongings(npcBelongings, result.sceneDelta.npcBelongingsUpdates);
     const nextNpcRelations = applyNpcRelationUpdates(npcRelations, result.sceneDelta.npcRelationUpdates);
+    const nextNpcStates = applyNpcStateUpdates(npcStates, directorBeat?.npc_state_updates);
     const proposedHudDelta = result.hudDelta ?? fallbackHudDelta(input);
     const hudDelta = reconcileAffectionDelta(input, history, proposedHudDelta);
     const nextHud = applyHudDelta(hud, hudDelta);
@@ -1324,6 +1386,7 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
       inventory: nextInventory,
       npcBelongings: nextNpcBelongings,
       npcRelations: nextNpcRelations,
+      npcStates: nextNpcStates,
     };
     const nextState = chapterOutcome
       ? {
