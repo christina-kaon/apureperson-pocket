@@ -1366,7 +1366,7 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
           : undefined;
         const streamedText = await callStoryModelStream(
           turnPrompt,
-          "生成本轮仙侠互动场景，只输出JSON。",
+          "生成本轮仙侠互动场景，只输出JSON。正文必须写满900至1400个中文字符：把beat_outline的每一个节点都完整演出来（谁做什么、出现什么、对白与反应），不许一笔带过或合并节点；不足900字即不合格。",
           0.62,
           5600,
           { requestTimeoutMs: 60000, ...(writerModel ? { primaryModel: writerModel } : {}) },
@@ -1394,7 +1394,7 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
       try {
         raw = await callStoryModel(
           turnPrompt,
-          "生成本轮仙侠互动场景，只输出JSON。",
+          "生成本轮仙侠互动场景，只输出JSON。正文必须写满900至1400个中文字符：把beat_outline的每一个节点都完整演出来（谁做什么、出现什么、对白与反应），不许一笔带过或合并节点；不足900字即不合格。",
           0.62,
           5600,
           {
