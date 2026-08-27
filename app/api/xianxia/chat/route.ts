@@ -730,12 +730,18 @@ function promoteQuotedSpeech(events: XianxiaEvent[], story: XianxiaStory, presen
     while ((match = quoteRe.exec(text)) !== null && splits < 3) {
       const lookback = text.slice(Math.max(0, match.index - 50), match.index);
       const lookahead = text.slice(match.index + match[0].length, match.index + match[0].length + 16);
-      const speaker = presentChars.find((c) => lookback.includes(c.name))
+      let speaker = presentChars.find((c) => lookback.includes(c.name))
         ?? presentChars.find((c) => lookahead.includes(c.name) && /[说道答问叹笑]/.test(lookahead));
-      if (!speaker || speaker.id === story.playerRole.id) continue;
+      let transientName: string | null = null;
+      if (!speaker) {
+        const generic = lookback.match(/(老?掌柜|老板娘|老板|小二|伙计|摊主|车夫|船夫|老者|老妪|老汉|少年|少女|童子|杂役|弟子|执事|长老|夫人|公子|姑娘|大婶|大汉|修士|侍女|门房)(?:[^「“"『]{0,8})$/u);
+        if (generic) transientName = generic[1];
+      }
+      if (!speaker && !transientName) continue;
+      if (speaker && speaker.id === story.playerRole.id) continue;
       let prefix = text.slice(cursor, match.index).trim().replace(/[：:，,]$/u, "");
       if (prefix) pieces.push({ type: "narration", text: /[。！？!?”」』]$/u.test(prefix) ? prefix : `${prefix}。` });
-      pieces.push({ type: "dialogue", person: speaker.id, text: match[1] });
+      pieces.push({ type: "dialogue", person: speaker ? speaker.id : transientName!, text: match[1] });
       cursor = match.index + match[0].length;
       splits += 1;
     }
@@ -791,7 +797,12 @@ function normalizeTurn(value: unknown, story: XianxiaStory, present: string[]): 
         : [{ type: "narration", text }];
     }
     if (event.type !== "dialogue") return [{ type: "narration", text }];
-    const person = typeof event.person === "string" ? event.person : "";
+    const person = typeof event.person === "string" ? event.person.trim() : "";
+    const isTransient = Boolean(person) && !presentSet.has(person)
+      && person !== story.playerRole.id && person !== story.playerRole.name
+      && !story.characters.some((c) => c.id === person)
+      && [...person].length <= 10;
+    if (isTransient) return [{ type: "dialogue", person, text }];
     if (!presentSet.has(person) || person === story.playerRole.id) {
       // A useful stage direction should not force a full scene regeneration
       // merely because the model omitted or mistyped its actor id.
@@ -799,7 +810,7 @@ function normalizeTurn(value: unknown, story: XianxiaStory, present: string[]): 
     }
     return [{ type: "dialogue", person, text }];
   }).slice(0, 7);
-  if (events.length < 5) return null;
+  if (events.length < 3) return null;
 
   const choices = item.choices.flatMap((raw): XianxiaChoice[] => {
     if (!raw || typeof raw !== "object") return [];
@@ -1006,7 +1017,7 @@ function promptForTurn(args: {
 14. present_characters中的has_appeared_in_visible_history表示角色是否已经在玩家可见剧情中正式登场。值为false的角色不能直接顶着名字开口：若本轮确有必要让其出现，必须先用一条自然旁白写清他是谁、与玩家是什么关系、以什么可辨识动作进入现场、此刻为何而来，再让其说话；不能写人物简历，也不能假定玩家已经看过导演资料。若本轮不需要他，可以继续不让他出现。
 15. scene_memory中的facts、unresolvedThreads与relationshipNotes是跨轮连续性，不是文风素材。不得否认已经成立的地点、时间、行动结果或关系变化；角色可以对事实的原因和意义有不同理解，但不能集体把已发生的事实说成没发生。
 16. NPC的情绪与叙事反应强度必须与事件对其的实际意义相称：普通寒暄、常规动作和小决定只引起相称的回应，不因玩家身份放大普通互动，不让全场为一句日常话语停摆；高位角色的地位体现为现实影响力，不体现为对玩家居高临下或过度关注的姿态。
-17. 多名角色在场时，本轮回应至少形成两个落点：直接承接者之外，安排一名角色以插话、动作或对第三方的小动作侧面介入；远离话题中心的角色可用一笔背景动作保持在场。任何单一关系不得连续多轮独占叙事焦点；新引入的人物必须带来实际作用（信息、牵制或新的关系接口），不做背景板。私密或封闭场景不适用本条。
+17. 多名角色在场且确实被卷入时，可以形成多个落点（插话、侧面小动作、背景动作）；与本拍无关的角色允许整轮沉默或不出现，不逢人发言、不按人数轮流。任何单一关系不得连续多轮独占叙事焦点；新引入的人物必须带来实际作用，不做背景板。
 17.1 present_characters的secret与present_relationships、focus_relationships中的tension是NPC彼此试探、包庇、较劲与隐瞒的行为依据：NPC之间应发生不经过玩家的真实互动（对视、岔话、互相打掩护、话里带刺）。secret只影响行为与神态，未满足揭示条件不得在可见文本中说破；玩家以读心等有效能力主动读取时除外，此时按8.2以心声显形。
 
 文风：
@@ -1019,7 +1030,7 @@ ${JSON.stringify(runtimePacket)}
 玩家本轮明确提交：${JSON.stringify(input)}
 
 生成规则：
-- 输出5至7个按真实时间连续的events；每轮正文必须合计1200至1500个中文字符，不用重复、排比、总结意义或解释凑字。这是一段完整的小说式短剧场景，不是短回复。
+- 输出3至7个按真实时间连续的events，数量按本拍实际需要取：轻量承接、独处、简短对答自然短（3-4个，正文500-800字）；重要揭示、冲突、群像大场面写足（5-7个，正文1000-1500字）。不凑数，不为凑字重复、排比或总结。
 - 前两个events内让真正听见或看见的人具体承接玩家输入，不复述后立刻转移话题。
 - NPC回应的是玩家这一次实际说了什么、做了什么以及它造成的可见变化，不是角色模板。玩家沉默不自动等于隐瞒，含糊不自动等于装傻，拒绝不自动等于嘴硬，突然冒险也不能被改写成“仍在稳健布局”。既有声誉只能造成期待或反差，不能覆盖当下表现。
 - 玩家必须是场面的行动中心：NPC的判断、请求、试探、照顾或阻拦要落到“你现在能决定什么”。
@@ -1042,7 +1053,7 @@ ${JSON.stringify(runtimePacket)}
 - 只输出JSON，不输出解释、思维过程、导演计划、摘要或可见状态卡。
 
 输出结构：
-{"story_routing":"follow","activated_candidate":null,"chapter_complete":false,"events":[{"type":"narration","text":"现场正文"},{"type":"dialogue","person":"present角色id","text":"说出口的话"},{"type":"os","person":"角色id","text":"该角色此刻未说出口的真实心声（导演os_assignments指定时使用）"},{"type":"system","text":"系统口吻回执（装载/结算/判定时使用）"},{"type":"loot","text":"获得物品的一句话","items":[{"name":"物品名","qty":1,"note":"一句说明"}]}],"choices":[{"kind":"speech","text":"玩家言行"},{"kind":"action","text":"相反方向言行"}],"hud_delta":{"steadiness":0,"jiujiu_affection":0,"lan_affection":0,"cultivation":0},"scene_delta":{"time":null,"location":null,"facts_added":[],"facts_resolved":[],"threads_opened":[],"threads_resolved":[],"relationship_notes":[],"closing_mode":"action","world_process_moves":[{"id":"进程id","advance":false,"note":""}],"new_process":null,"items_gained":[],"items_lost":[],"npc_belongings_updates":[{"person":"角色id","items":[{"name":"","qty":1,"note":""}]}],"npc_relation_updates":[{"pair":["角色id","角色id"],"warmth_delta":0,"tension_delta":0,"note":""}]}}`;
+{"story_routing":"follow","activated_candidate":null,"chapter_complete":false,"events":[{"type":"narration","text":"现场正文"},{"type":"dialogue","person":"present角色id；临时人物（街边掌柜/路人等）直接写其称谓且全轮一致","text":"说出口的话"},{"type":"os","person":"角色id","text":"该角色此刻未说出口的真实心声（导演os_assignments指定时使用）"},{"type":"system","text":"系统口吻回执（装载/结算/判定时使用）"},{"type":"loot","text":"获得物品的一句话","items":[{"name":"物品名","qty":1,"note":"一句说明"}]}],"choices":[{"kind":"speech","text":"玩家言行"},{"kind":"action","text":"相反方向言行"}],"hud_delta":{"steadiness":0,"jiujiu_affection":0,"lan_affection":0,"cultivation":0},"scene_delta":{"time":null,"location":null,"facts_added":[],"facts_resolved":[],"threads_opened":[],"threads_resolved":[],"relationship_notes":[],"closing_mode":"action","world_process_moves":[{"id":"进程id","advance":false,"note":""}],"new_process":null,"items_gained":[],"items_lost":[],"npc_belongings_updates":[{"person":"角色id","items":[{"name":"","qty":1,"note":""}]}],"npc_relation_updates":[{"pair":["角色id","角色id"],"warmth_delta":0,"tension_delta":0,"note":""}]}}`;
 }
 
 type TurnBody = {

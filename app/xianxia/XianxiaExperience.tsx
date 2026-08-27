@@ -557,9 +557,9 @@ export default function XianxiaExperience({ story }: { story: PublicXianxiaStory
             const character = characterById.get(item.person);
             eventContent = (
               <article className={`xx-npc-event xx-${item.type}`}>
-                <button onClick={() => character && setActiveCharacter(character)}>{character ? <CharacterPortrait character={character} /> : "·"}</button>
+                <button onClick={() => character && setActiveCharacter(character)}>{character ? <CharacterPortrait character={character} /> : <i>{item.person.slice(0, 1)}</i>}</button>
                 <div>
-                  <header>{character?.name ?? "现场"}</header>
+                  <header>{character?.name ?? item.person}</header>
                   <p>{item.text}</p>
                 </div>
               </article>
