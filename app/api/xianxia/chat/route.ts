@@ -830,8 +830,6 @@ function normalizeTurn(value: unknown, story: XianxiaStory, present: string[]): 
     return [{ type: "dialogue", person, text }];
   }).slice(0, 9);
   if (events.length < 5) return null;
-  const totalEventChars = events.reduce((sum, event) => sum + [...(event.text ?? "")].length, 0);
-  if (totalEventChars < 650) return null;
 
   const choices = item.choices.flatMap((raw): XianxiaChoice[] => {
     if (!raw || typeof raw !== "object") return [];
@@ -854,6 +852,10 @@ function normalizeTurn(value: unknown, story: XianxiaStory, present: string[]): 
     chapterComplete: item.chapter_complete === true,
     sceneDelta: normalizeSceneDelta(item.scene_delta),
   };
+}
+
+function turnTextLength(turn: TurnResult): number {
+  return turn.events.reduce((sum, event) => sum + [...(event.text ?? "")].length, 0);
 }
 
 function buildCanonPacket(scanText: string) {
@@ -1323,6 +1325,7 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
     // V4.4 流式：首发尝试用流式调用并逐个下发已闭合 event；
     // 解析或校验失败时回落到原有 callStoryModel 全套修复/换模机器（质量路径不变）。
     let raw: unknown = null;
+    let shortFallbackRaw: unknown = null;
     if (onEvent) {
       try {
         let emittedCount = 0;
@@ -1338,25 +1341,39 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
           },
         );
         const parsed = parseModelJson(streamedText);
-        if (normalizeTurn(parsed, story, segment.present)) raw = parsed;
+        const streamedTurn = normalizeTurn(parsed, story, segment.present);
+        if (streamedTurn) {
+          if (turnTextLength(streamedTurn) >= 650) raw = parsed;
+          else shortFallbackRaw = parsed;
+        }
       } catch {
         raw = null;
       }
     }
     if (raw === null) {
-      raw = await callStoryModel(
-        turnPrompt,
-        "生成本轮仙侠互动场景，只输出JSON。",
-        0.62,
-        5600,
-        {
-          stage: "prompt3",
-          requestTimeoutMs: 36000,
-          validate: (value) => normalizeTurn(value, story, segment.present)
-            ? true
-            : { ok: false, reason: "xianxia_turn_shape_invalid" },
-        },
-      );
+      try {
+        raw = await callStoryModel(
+          turnPrompt,
+          "生成本轮仙侠互动场景，只输出JSON。",
+          0.62,
+          5600,
+          {
+            stage: "prompt3",
+            requestTimeoutMs: 36000,
+            validate: (value) => {
+              const turn = normalizeTurn(value, story, segment.present);
+              if (!turn) return { ok: false, reason: "xianxia_turn_shape_invalid" };
+              if (turnTextLength(turn) < 650) {
+                return { ok: false, reason: "正文合计不足800中文字符：把这一拍写完整——用各角色的小动作、环境变化与角色间互动补足体量，对白保持拆碎（单条不超过60字），不重复不凑字" };
+              }
+              return true;
+            },
+          },
+        );
+      } catch (error) {
+        if (shortFallbackRaw !== null) raw = shortFallbackRaw;
+        else throw error;
+      }
     }
     const result = normalizeTurn(raw, story, segment.present);
     if (!result) throw new Error("prompt3_shape_invalid_after_validation");
