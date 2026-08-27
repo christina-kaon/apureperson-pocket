@@ -94,6 +94,7 @@ type ClientState = {
   npcBelongings?: Record<string, Array<{ name: string; qty: number; note?: string }>>;
   npcRelations?: Array<{ pair: [string, string]; warmth: number; tension: number; note: string }>;
   npcStates?: Record<string, { mood: string; stanceToPlayer: string; recentPatterns: string[] }>;
+  scenePresent?: string[];
 };
 
 type StoryRouting = "follow" | "echo" | "invite" | "trigger" | "diverge";
@@ -799,8 +800,11 @@ function stripHangingEnding(events: XianxiaEvent[], minKeep = 0): XianxiaEvent[]
 }
 
 // 单条 raw event 的清洗规则：流式下发路径与终版 normalizeTurn 必须共用同一份，
-// 否则（os 不在场转旁白 / 无效 person 转旁白 / 空文本丢弃）会造成流式与终版分歧。
-function cleanRawEvent(raw: unknown, story: XianxiaStory, presentSet: Set<string>): XianxiaEvent[] {
+// 否则（无效 person 处理 / 空文本丢弃）会造成流式与终版分歧。
+// 任何非玩家角色开口一律保留为气泡台词——注册在场、注册未在场、临时路人同权；
+// 出场与发言的选择权在模型（跟随玩家意图），清洗层只兜住两类硬错误：
+// 代玩家写台词、把整句描述塞进 person 字段。
+function cleanRawEvent(raw: unknown, story: XianxiaStory): XianxiaEvent[] {
   if (!raw || typeof raw !== "object") return [];
   const event = raw as Record<string, unknown>;
   const text = typeof event.text === "string" ? event.text.trim() : "";
@@ -811,21 +815,14 @@ function cleanRawEvent(raw: unknown, story: XianxiaStory, presentSet: Set<string
     return items.length ? [{ type: "loot", text, items }] : [{ type: "system", text }];
   }
   if (event.type === "os") {
-    const osPerson = typeof event.person === "string" ? event.person : "";
-    return presentSet.has(osPerson) && osPerson !== story.playerRole.id
+    const osPerson = typeof event.person === "string" ? event.person.trim() : "";
+    return osPerson && osPerson !== story.playerRole.id && osPerson !== story.playerRole.name
       ? [{ type: "os", person: osPerson, text }]
       : [{ type: "narration", text }];
   }
   if (event.type !== "dialogue") return [{ type: "narration", text }];
   const person = typeof event.person === "string" ? event.person.trim() : "";
-  const isTransient = Boolean(person) && !presentSet.has(person)
-    && person !== story.playerRole.id && person !== story.playerRole.name
-    && !story.characters.some((c) => c.id === person)
-    && [...person].length <= 10;
-  if (isTransient) return [{ type: "dialogue", person, text }];
-  if (!presentSet.has(person) || person === story.playerRole.id) {
-    // A useful stage direction should not force a full scene regeneration
-    // merely because the model omitted or mistyped its actor id.
+  if (!person || person === story.playerRole.id || person === story.playerRole.name || [...person].length > 16) {
     return [{ type: "narration", text }];
   }
   return [{ type: "dialogue", person, text }];
@@ -835,8 +832,7 @@ function normalizeTurn(value: unknown, story: XianxiaStory, present: string[], m
   if (!value || typeof value !== "object") return null;
   const item = value as Record<string, unknown>;
   if (!Array.isArray(item.events) || !Array.isArray(item.choices)) return null;
-  const presentSet = new Set(present);
-  const events = item.events.flatMap((raw) => cleanRawEvent(raw, story, presentSet)).slice(0, 10);
+  const events = item.events.flatMap((raw) => cleanRawEvent(raw, story)).slice(0, 10);
   if (events.length < 5) return null;
 
   const choices = item.choices.flatMap((raw): XianxiaChoice[] => {
@@ -872,7 +868,6 @@ function createStreamEventProcessor(story: XianxiaStory, present: string[], onEv
   let sent = 0;
   // 与 normalizeTurn 的 slice(0, 10) 对齐：清洗后第 11 条起终版不会保留，流式也不许下发。
   let cleanedCount = 0;
-  const presentSet = new Set(present);
   const transform = (event: XianxiaEvent): XianxiaEvent[] =>
     splitLongDialogue(promoteQuotedSpeech([event], story, present));
   const send = (event: XianxiaEvent) => { sent += 1; onEvent(event); };
@@ -888,7 +883,7 @@ function createStreamEventProcessor(story: XianxiaStory, present: string[], onEv
   return {
     push(raw: unknown) {
       const cleaned: XianxiaEvent[] = [];
-      for (const item of cleanRawEvent(raw, story, presentSet)) {
+      for (const item of cleanRawEvent(raw, story)) {
         if (cleanedCount >= 10) break;
         cleanedCount += 1;
         cleaned.push(item);
@@ -947,6 +942,7 @@ function promptForTurn(args: {
   inputKind: string;
   history: HistoryEntry[];
   segmentIndex: number;
+  present: string[];
   storybookCandidates: StorybookCandidate[];
   perception: PerceptionPacket;
   turnsSinceMaterial: number;
@@ -968,6 +964,7 @@ function promptForTurn(args: {
     inputKind,
     history,
     segmentIndex,
+    present,
     storybookCandidates,
     perception,
     turnsSinceMaterial,
@@ -985,7 +982,7 @@ function promptForTurn(args: {
   } = args;
   const segment = story.segments[segmentIndex];
   const presentCharacters = story.characters
-    .filter((character) => segment.present.includes(character.id))
+    .filter((character) => present.includes(character.id))
     .map((character) => ({
       id: character.id,
       name: character.name,
@@ -1003,7 +1000,7 @@ function promptForTurn(args: {
   const focusRelationships = story.relationships.filter((relationship) =>
     segment.focusRelationships.includes(relationship.id)
   );
-  const presentOrPlayer = new Set([...segment.present, story.playerRole.id]);
+  const presentOrPlayer = new Set([...present, story.playerRole.id]);
   const presentRelationships = story.relationships.filter((relationship) =>
     !segment.focusRelationships.includes(relationship.id)
     && relationship.roles.every((role) => presentOrPlayer.has(role))
@@ -1047,6 +1044,9 @@ function promptForTurn(args: {
       completion_signals: segment.completionSignals ?? [segment.exit],
     },
     present_characters: presentCharacters,
+    offstage_characters: story.characters
+      .filter((character) => !present.includes(character.id))
+      .map((character) => ({ id: character.id, name: character.name, story_core: compactText(character.storyCore, 60) })),
     focus_relationships: focusRelationships,
     present_relationships: presentRelationships,
     ...(canon ? { canon_worldbook: canon } : {}),
@@ -1105,6 +1105,7 @@ function promptForTurn(args: {
 12. trigger不要求关键词复读：玩家主动追查、执行、接受现场邀请，玩家动作的物理后果自然抵达候选，或当前可见状态已满足trigger_condition，均可触发。推荐选项与自由输入完全同等。diverge适用于杀死关键人物、远走他乡、公开秘密、背叛、毁坏关键物、拒绝既定任务等已经改变前提的有效行动；此时保留玩家成果，用候选的功能生成变体，不得把人和地点复原。
 13. story_routing.guidance只调整提示强度。轮数永远不能自动解锁候选，也不能自动完成章节。主线材料是隐藏参考：玩家未主动指向主线时，不发起主线邀请、不让主线人物带着主线事务进场打断玩家当前玩法，优先顺着玩家此刻正在做的事给足体验；玩家若明确谈感情就让关系戏完整发展；玩家若询问或行动指向主线，就不要假装没听懂，立刻全速承接。
 14. present_characters中的has_appeared_in_visible_history表示角色是否已经在玩家可见剧情中正式登场。值为false的角色不能直接顶着名字开口：若本轮确有必要让其出现，必须先用一条自然旁白写清他是谁、与玩家是什么关系、以什么可辨识动作进入现场、此刻为何而来，再让其说话；不能写人物简历，也不能假定玩家已经看过导演资料。若本轮不需要他，可以继续不让他出现。
+14.1 谁出场、谁发言，跟随玩家本轮意图决定：玩家点名、召唤、寻找或明显期待某个角色（含offstage_characters中的角色与世界观合理的路人）时，让该角色本轮实际登场并以dialogue气泡台词回应，不得以"不在预设名单"为由缺席或只在旁白里被提及。任何开口说话的角色——包括掌柜、路人、报信人等临时人物——一律用dialogue事件并在person写明其称谓，绝不把台词写进narration。offstage_characters只给了一句身份线索：让其登场时按14的首次登场规则自然引入，其言行只依据已公开信息与该身份合理推断。
 15. scene_memory中的facts、unresolvedThreads与relationshipNotes是跨轮连续性，不是文风素材。不得否认已经成立的地点、时间、行动结果或关系变化；角色可以对事实的原因和意义有不同理解，但不能集体把已发生的事实说成没发生。
 16. NPC的情绪与叙事反应强度必须与事件对其的实际意义相称：普通寒暄、常规动作和小决定只引起相称的回应，不因玩家身份放大普通互动，不让全场为一句日常话语停摆；高位角色的地位体现为现实影响力，不体现为对玩家居高临下或过度关注的姿态。
 17. 多名角色在场且确实被卷入时，可以形成多个落点（插话、侧面小动作、背景动作）；与本拍无关的角色允许整轮沉默或不出现，不逢人发言、不按人数轮流。任何单一关系不得连续多轮独占叙事焦点；新引入的人物必须带来实际作用，不做背景板。
@@ -1143,7 +1144,7 @@ ${JSON.stringify(runtimePacket)}
 - 只输出JSON，不输出解释、思维过程、导演计划、摘要或可见状态卡。
 
 输出结构：
-{"story_routing":"follow","activated_candidate":null,"chapter_complete":false,"events":[{"type":"narration","text":"现场正文"},{"type":"dialogue","person":"present角色id；临时人物（街边掌柜/路人等）直接写其称谓且全轮一致","text":"说出口的话"},{"type":"os","person":"角色id","text":"该角色此刻未说出口的真实心声（导演os_assignments指定时使用）"},{"type":"system","text":"系统口吻回执（装载/结算/判定时使用）"},{"type":"loot","text":"获得物品的一句话","items":[{"name":"物品名","qty":1,"note":"一句说明"}]}],"choices":[{"kind":"speech","text":"玩家言行"},{"kind":"action","text":"相反方向言行"}],"hud_delta":{"steadiness":0,"jiujiu_affection":0,"lan_affection":0,"cultivation":0},"scene_delta":{"time":null,"location":null,"facts_added":[],"facts_resolved":[],"threads_opened":[],"threads_resolved":[],"relationship_notes":[],"closing_mode":"action","world_process_moves":[{"id":"进程id","advance":false,"note":""}],"new_process":null,"items_gained":[],"items_lost":[],"npc_belongings_updates":[{"person":"角色id","items":[{"name":"","qty":1,"note":""}]}],"npc_relation_updates":[{"pair":["角色id","角色id"],"warmth_delta":0,"tension_delta":0,"note":""}]}}`;
+{"story_routing":"follow","activated_candidate":null,"chapter_complete":false,"events":[{"type":"narration","text":"现场正文"},{"type":"dialogue","person":"注册角色一律写其id（含本轮新登场的offstage角色）；临时人物（街边掌柜/路人等）直接写其称谓且全轮一致","text":"说出口的话"},{"type":"os","person":"角色id","text":"该角色此刻未说出口的真实心声（导演os_assignments指定时使用）"},{"type":"system","text":"系统口吻回执（装载/结算/判定时使用）"},{"type":"loot","text":"获得物品的一句话","items":[{"name":"物品名","qty":1,"note":"一句说明"}]}],"choices":[{"kind":"speech","text":"玩家言行"},{"kind":"action","text":"相反方向言行"}],"hud_delta":{"steadiness":0,"jiujiu_affection":0,"lan_affection":0,"cultivation":0},"scene_delta":{"time":null,"location":null,"facts_added":[],"facts_resolved":[],"threads_opened":[],"threads_resolved":[],"relationship_notes":[],"closing_mode":"action","world_process_moves":[{"id":"进程id","advance":false,"note":""}],"new_process":null,"items_gained":[],"items_lost":[],"npc_belongings_updates":[{"person":"角色id","items":[{"name":"","qty":1,"note":""}]}],"npc_relation_updates":[{"pair":["角色id","角色id"],"warmth_delta":0,"tension_delta":0,"note":""}]}}`;
 }
 
 type TurnBody = {
@@ -1275,6 +1276,20 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
     const hud = cleanHud(body.state?.hud);
 
     const segment = story.segments[segmentIndex];
+    // 运行时出场名单：段落静态名单 ∪ 场景内已动态入场者 ∪ 本轮玩家点名者。
+    // 玩家在回复里点名/召唤一个注册角色，就是导演意义上的"叫人进场"，链路必须承认；
+    // 段落推进时动态名单清空，回到下一段的预设阵容。
+    const registeredIds = new Set(story.characters.map((character) => character.id));
+    const scenePresentPrev = Array.isArray(body.state?.scenePresent)
+      ? body.state.scenePresent.filter((id): id is string => typeof id === "string" && registeredIds.has(id))
+      : [];
+    const mentionedIds = story.characters
+      .filter((character) => !segment.present.includes(character.id) && !scenePresentPrev.includes(character.id))
+      .filter((character) =>
+        input.includes(character.name)
+        || ([...character.name].length >= 3 && input.includes(character.name.slice(1))))
+      .map((character) => character.id);
+    const present = [...new Set([...segment.present, ...scenePresentPrev, ...mentionedIds])];
     const usedMaterialIds = new Set(
       body.state?.usedMaterialIds?.filter((id): id is string => typeof id === "string")
         ?? segment.materials.slice(0, materialIndex).map((material) => material.id),
@@ -1313,7 +1328,7 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
         echo_guidance: material.echo ?? "只用已经公开的未决线索制造轻微回响，不得提前透露此条目的新事实。",
         divergence_guidance: material.divergence ?? "若玩家已改变前提，保留这一节点的戏剧功能，按当前事实改写过程与结果。",
       }));
-    const perception = buildPerceptionPacket(input, inputKind, segment.present);
+    const perception = buildPerceptionPacket(input, inputKind, present);
     const canonPacket = (body as { canonAssets?: boolean }).canonAssets === true
       ? buildCanonPacket(`${history.map((h) => h.text ?? "").join(" ").slice(-3000)} ${input}`)
       : null;
@@ -1332,13 +1347,13 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
       .filter((r) => !r.roles.includes(story.playerRole.id) && r.roles.length === 2)
       .map((r) => ({ pair: [r.roles[0], r.roles[1]] as [string, string], warmth: 55, tension: 35, note: compactText(r.tension, 80) })));
     const npcRelations = cleanNpcRelations(body.state?.npcRelations, npcRelationSeeds);
-    const npcStates = cleanNpcStates(body.state?.npcStates, story, segment.present);
+    const npcStates = cleanNpcStates(body.state?.npcStates, story, present);
 
     // P3-A 隐藏导演：短结构化拍板；失败时优雅回落为单调用直出。
     let directorBeat: Record<string, unknown> | null = null;
     const directorStart = Date.now();
     try {
-      const presentOrPlayerIds = new Set([...segment.present, story.playerRole.id]);
+      const presentOrPlayerIds = new Set([...present, story.playerRole.id]);
       const directorPacket = {
         player_input: input,
         input_kind: inputKind,
@@ -1346,7 +1361,7 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
         scene_memory: sceneMemory,
         perception,
         present_characters: story.characters
-          .filter((character) => segment.present.includes(character.id))
+          .filter((character) => present.includes(character.id))
           .map((character) => ({
             id: character.id,
             name: character.name,
@@ -1355,6 +1370,9 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
             persona: character.persona ?? null,
             current_state: npcStates[character.id] ?? null,
           })),
+        offstage_characters: story.characters
+          .filter((character) => !present.includes(character.id))
+          .map((character) => ({ id: character.id, name: character.name })),
         relationships: story.relationships.filter((relationship) => relationship.roles.every((role) => presentOrPlayerIds.has(role))),
         storybook_candidates: storybookCandidates.map(({ id: _id, ...candidate }) => candidate),
         world_processes: worldProcesses,
@@ -1378,6 +1396,7 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
       inputKind,
       history,
       segmentIndex,
+      present,
       storybookCandidates,
       perception,
       turnsSinceMaterial,
@@ -1402,7 +1421,7 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
     if (onEvent) {
       try {
         let emittedCount = 0;
-        const streamProcessor = onEvent ? createStreamEventProcessor(story, segment.present, onEvent) : null;
+        const streamProcessor = onEvent ? createStreamEventProcessor(story, present, onEvent) : null;
         const writerModel = typeof (body as { writerModel?: string }).writerModel === "string"
           ? (body as { writerModel?: string }).writerModel
           : undefined;
@@ -1419,7 +1438,7 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
         );
         streamProcessor?.flush();
         const parsed = parseModelJson(streamedText);
-        const streamedTurn = normalizeTurn(parsed, story, segment.present);
+        const streamedTurn = normalizeTurn(parsed, story, present);
         if (streamedTurn) {
           raw = parsed;
           streamSentCount = streamProcessor?.emittedCount() ?? 0;
@@ -1442,14 +1461,14 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
           requestTimeoutMs: 60000,
           ...((body as { writerModel?: string }).writerModel ? { primaryModel: (body as { writerModel?: string }).writerModel } : {}),
           validate: (value) => {
-            const turn = normalizeTurn(value, story, segment.present);
+            const turn = normalizeTurn(value, story, present);
             if (!turn) return { ok: false, reason: "xianxia_turn_shape_invalid" };
             return true;
           },
         },
       );
     }
-    const result = normalizeTurn(raw, story, segment.present, streamSentCount);
+    const result = normalizeTurn(raw, story, present, streamSentCount);
     if (!result) throw new Error("prompt3_shape_invalid_after_validation");
     if (baseSceneMemory.lastClosingMode === "question") {
       result.events = stripTrailingQuestionSentence(result.events, streamSentCount);
@@ -1487,6 +1506,16 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
     const isLastSegmentOfChapter = !nextSegment || nextSegment.chapterId !== segment.chapterId;
     const completionRouteIsValid = storybookCandidates.length === 0 || materialCommitted;
     const segmentCompleted = result.chapterComplete && completionRouteIsValid;
+    // 本轮实际开口的"注册但不在段落名单"角色也算已入场：下一轮继续在场（人设全量注入），
+    // 段落推进时动态名单整体清空，回到新段落的预设阵容。
+    const spokeOffstage = result.events
+      .filter((event): event is XianxiaEvent & { person: string } =>
+        event.type === "dialogue" && typeof event.person === "string"
+        && registeredIds.has(event.person) && !segment.present.includes(event.person))
+      .map((event) => event.person);
+    const nextScenePresent = segmentCompleted
+      ? []
+      : [...new Set([...scenePresentPrev, ...mentionedIds, ...spokeOffstage])];
     const chapterCompleted = segmentCompleted && isLastSegmentOfChapter;
     const chapterOutcome = chapterCompleted ? buildChapterOutcome(result.events) : undefined;
     const staticChapterComplete = chapterCompleted
@@ -1510,6 +1539,7 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
       npcBelongings: nextNpcBelongings,
       npcRelations: nextNpcRelations,
       npcStates: nextNpcStates,
+      scenePresent: nextScenePresent,
     };
     const nextState = chapterOutcome
       ? {
