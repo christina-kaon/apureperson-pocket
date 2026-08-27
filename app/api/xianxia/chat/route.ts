@@ -690,6 +690,25 @@ function ensureDivergentChoices(choices: XianxiaChoice[]): XianxiaChoice[] {
   ];
 }
 
+// 超长台词确定性拆条：>90字的 dialogue 按句子边界拆成同角色连续气泡。
+function splitLongDialogue(events: XianxiaEvent[]): XianxiaEvent[] {
+  const out: XianxiaEvent[] = [];
+  for (const event of events) {
+    if (event.type !== "dialogue" || [...(event.text ?? "")].length <= 90) { out.push(event); continue; }
+    const sentences = (event.text ?? "").match(/[^。！？!?]+[。！？!?]?[”」』"]?/gu) ?? [event.text ?? ""];
+    let chunk = "";
+    const chunks: string[] = [];
+    for (const sentence of sentences) {
+      if ([...chunk].length + [...sentence].length > 70 && chunk) { chunks.push(chunk); chunk = sentence; }
+      else chunk += sentence;
+    }
+    if (chunk) chunks.push(chunk);
+    for (const piece of chunks.slice(0, 3)) out.push({ type: "dialogue", person: event.person, text: piece.trim() });
+    if (chunks.length > 3) out.push({ type: "dialogue", person: event.person, text: chunks.slice(3).join("").trim() });
+  }
+  return out;
+}
+
 // os 事件并入同角色对白气泡，格式：正常话（os：内心话）；无相邻对白的转为气泡内独立 os 行。
 function inlineOsEvents(events: XianxiaEvent[]): XianxiaEvent[] {
   const merged: XianxiaEvent[] = [];
@@ -809,8 +828,8 @@ function normalizeTurn(value: unknown, story: XianxiaStory, present: string[]): 
       return [{ type: "narration", text }];
     }
     return [{ type: "dialogue", person, text }];
-  }).slice(0, 7);
-  if (events.length < 3) return null;
+  }).slice(0, 9);
+  if (events.length < 5) return null;
 
   const choices = item.choices.flatMap((raw): XianxiaChoice[] => {
     if (!raw || typeof raw !== "object") return [];
@@ -821,7 +840,7 @@ function normalizeTurn(value: unknown, story: XianxiaStory, present: string[]): 
   }).slice(0, 2);
   if (choices.length !== 2) return null;
   return {
-    events: stripHangingEnding(inlineOsEvents(promoteQuotedSpeech(events, story, present))),
+    events: stripHangingEnding(splitLongDialogue(inlineOsEvents(promoteQuotedSpeech(events, story, present)))),
     choices,
     hudDelta: normalizeHudDelta(item.hud_delta),
     storyRouting: storyRoutings.has(item.story_routing as StoryRouting)
@@ -1030,7 +1049,7 @@ ${JSON.stringify(runtimePacket)}
 玩家本轮明确提交：${JSON.stringify(input)}
 
 生成规则：
-- 输出3至7个按真实时间连续的events，数量按本拍实际需要取：轻量承接、独处、简短对答自然短（3-4个，正文500-800字）；重要揭示、冲突、群像大场面写足（5-7个，正文1000-1500字）。不凑数，不为凑字重复、排比或总结。
+- 输出5至9个按真实时间连续的events；每轮正文合计800至1500个中文字符（普通轮800-1100，重场面1100-1500），不用重复、排比、总结凑字。对白必须拆碎：单条dialogue以一两句话为宜（一般不超过60字），同一角色可以在一轮内多次开口、被打断、接话、补一句；严禁让任何角色一次性说一大段台词，长内容拆成多条气泡与动作narration交替。
 - 前两个events内让真正听见或看见的人具体承接玩家输入，不复述后立刻转移话题。
 - NPC回应的是玩家这一次实际说了什么、做了什么以及它造成的可见变化，不是角色模板。玩家沉默不自动等于隐瞒，含糊不自动等于装傻，拒绝不自动等于嘴硬，突然冒险也不能被改写成“仍在稳健布局”。既有声誉只能造成期待或反差，不能覆盖当下表现。
 - 玩家必须是场面的行动中心：NPC的判断、请求、试探、照顾或阻拦要落到“你现在能决定什么”。
