@@ -249,19 +249,25 @@ export default function XianxiaExperience({ story }: { story: PublicXianxiaStory
       if (!response.ok || !payload.events || !payload.choices || !payload.state) {
         throw new Error(payload.error || "这一轮暂时没有生成成功");
       }
-      // 对账：流式已渲染的 events 与 final 一致则保留，只补媒体；不一致则整体替换为 final 版本
-      const streamedMatchesFinal = streamedEvents.length === payload.events.length
-        && streamedEvents.every((event, index) =>
-          event.text === payload.events![index]?.text && event.type === payload.events![index]?.type);
+      // 对账：一致则保留；不一致时只替换首个差异点之后的尾部（避免整卷闪换）
+      let firstDiff = 0;
+      const finalEvents = payload.events;
+      while (firstDiff < streamedEvents.length && firstDiff < finalEvents.length
+        && streamedEvents[firstDiff].text === finalEvents[firstDiff]?.text
+        && streamedEvents[firstDiff].type === finalEvents[firstDiff]?.type) {
+        firstDiff += 1;
+      }
+      const fullyMatches = firstDiff === streamedEvents.length && firstDiff === finalEvents.length;
+      const staleIds = streamedIds.slice(firstDiff);
       setMessages((current) => {
-        const base = streamedIds.length && !streamedMatchesFinal
-          ? current.filter((item) => !streamedIds.includes(item.id))
+        const base = streamedIds.length && !fullyMatches
+          ? current.filter((item) => !staleIds.includes(item.id))
           : current;
         return [
           ...base,
-          ...(streamedIds.length && streamedMatchesFinal
+          ...(streamedIds.length && fullyMatches
             ? []
-            : payload.events!.map((event) => ({ ...event, id: makeId("event"), kind: "event" as const }))),
+            : finalEvents.slice(streamedIds.length ? firstDiff : 0).map((event) => ({ ...event, id: makeId("event"), kind: "event" as const }))),
           ...(payload.mediaCues ?? []).map((cue) => ({ id: makeId("media"), kind: "media" as const, cue })),
         ];
       });
