@@ -1364,6 +1364,7 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
               const turn = normalizeTurn(value, story, segment.present);
               if (!turn) return { ok: false, reason: "xianxia_turn_shape_invalid" };
               if (turnTextLength(turn) < 650) {
+                shortFallbackRaw = value;
                 return { ok: false, reason: "正文合计不足800中文字符：把这一拍写完整——用各角色的小动作、环境变化与角色间互动补足体量，对白保持拆碎（单条不超过60字），不重复不凑字" };
               }
               return true;
