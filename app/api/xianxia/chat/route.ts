@@ -799,6 +799,13 @@ function stripHangingEnding(events: XianxiaEvent[], minKeep = 0): XianxiaEvent[]
   return out;
 }
 
+// 观测器（只计数不改写）：旁白里以玩家为执行者的代写句（"你接过/你点头/你心头一紧"）。
+// 命中数暴露在诊断字段，用于量化 prompt 层（底线 1.3）的拦截效果，不做文本手术。
+const playerAgencyPattern = /(^|[。！？!?；;”」』])\s*你(?:又|再|也|只|便|才|就)?(接|拿|点头|摇头|说|答|应|开口|心[头中里]|不由|忍不住|伸手|迈|走|转身|抬|皱眉|笑|叹|决定|选择|跟着|坐|站|退|上前|凑|望向|看向|愣|怔|松了)/;
+function countPlayerAgencyHits(events: XianxiaEvent[]): number {
+  return events.filter((event) => event.type === "narration" && playerAgencyPattern.test(event.text ?? "")).length;
+}
+
 // 单条 raw event 的清洗规则：流式下发路径与终版 normalizeTurn 必须共用同一份，
 // 否则（无效 person 处理 / 空文本丢弃）会造成流式与终版分歧。
 // 任何非玩家角色开口一律保留为气泡台词——注册在场、注册未在场、临时路人同权；
@@ -1060,7 +1067,7 @@ function promptForTurn(args: {
     player_inventory: { usage: "玩家背包账本。获得/失去物品用loot事件呈现并在scene_delta.items_gained/items_lost登记；账本内容跨轮一致，不得凭空消失。", items: inventory },
     npc_belongings: { usage: "NPC随身物品账本。玩家首次查看/偷看某NPC物品时现场生成合理内容并在scene_delta.npc_belongings_updates整表登记；已登记的下次必须一致。", records: npcBelongings },
     npc_relations: { usage: "NPC之间的情感账本（warmth亲近0-100/tension张力0-100）。他们彼此的语气、袒护、拆台应与当前值相称；本轮NPC间互动造成变化时在scene_delta.npc_relation_updates汇报增减（-5到+5）。", pairs: npcRelations },
-    ...(directorBeat ? { director_beat: { usage: "隐藏导演对本轮的拍板：正文按beat_outline节点顺序推进——变化节点写足、过渡节点从简，本轮核心变化在中部节点完成，不得把全部变化堆到结尾；每名角色的表现依其persona三层与current_state（mood/stance）落笔，不复读recent_patterns里的旧反应模式；结尾落在closing_direction指向的具体钩子上。若拍板与正史或玩家本轮实际行动冲突，以正史与玩家行动优先。", ...directorBeat } } : {}),
+    ...(directorBeat ? { director_beat: { usage: "隐藏导演对本轮的拍板：正文按beat_outline节点顺序推进——变化节点写足、过渡节点从简，本轮核心变化在中部节点完成，不得把全部变化堆到结尾；每名角色的表现依其persona三层与current_state（mood/stance）落笔，不复读recent_patterns里的旧反应模式；反应形状按engagement执行：focus时只有focus_person做主要回应、其他人至多背景小动作或整轮沉默，ensemble时被卷入者互相接话互相冲突（甲怼乙、乙拉丙），禁止每人各自对玩家说一句的排队式反应；结尾落在closing_direction指向的具体钩子上。若拍板与正史或玩家本轮实际行动冲突，以正史与玩家行动优先。", ...directorBeat } } : {}),
     recent_visible_events: history,
     scene_memory: sceneMemory,
     player_perception: perception,
@@ -1090,6 +1097,7 @@ function promptForTurn(args: {
 1. 玩家扮演${story.playerRole.displayRole}，玩家可见叙述始终用“你”，绝不把${story.playerRole.name}写成NPC发言者，也不替玩家补写本轮言行、心理与决定。
 1.1 player_role.fixed_core只锁定身份、能力、过去与既有关系；player_runtime_profile.optional_baseline_tendency只是可选表演底色。不得把基础倾向写成玩家本轮已经表现出的性格，也不得让NPC凭角色原设断言玩家“又在装糊涂”“果然嘴硬”“一定另有算计”“其实害怕”或同类内心结论。
 1.2 判断玩家当前态度时，证据优先级固定为：本轮明确输入与可见行动 > 近期玩家明确输入 > 已发生的关系互动 > 公开声誉与可选基础倾向。前两层没有证据时，NPC应通过观察、试探、自然追问或暂不下结论保留空间；可以误解，但误解必须写成该NPC自身的不确定判断，不能写成旁白事实。
+1.3 玩家的行动、反应、决定、心理与台词只能来自玩家的实际输入，正文一律不得代写或预演——"你接过""你点头""你心头一紧""你说道""你不由得"这类以玩家为执行者的句子全部违规。世界可以抵达玩家的边界：东西递到你手边、话音落在你耳边、目光落在你身上、危险逼到三步之内——写到抵达即止，玩家如何回应永远留白。需要推进剧情时，把局面推到玩家不得不反应的临界点（事件砸到面前、有人把问题摆到桌上），用结尾钩子与choices邀请玩家行动，绝不替玩家跨过那一步。
 2. 人物不能为推进剧情降智；NPC只依据当前场景、近期可见内容和各自知识行动。
 3. STYLE只改变表达，不改变正史、人物能力、关系与玩家行动权。
 4. NPC有自己的目标，会主动做事，也会彼此回应；不按人数轮流发表完整立场。
@@ -1381,7 +1389,7 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
         npc_relations: npcRelations,
         recent_history: history.slice(-8),
       };
-      const directorSystem = `你是互动仙侠故事的隐藏导演。不写玩家可见正文，不输出思维链，只为当前一拍输出一个JSON拍板。原则：先承认玩家本轮已造成的有效变化；只选真正相关的0-3名角色上场；角色行为由其private_goal、secret与关系张力决定；玩家引入新事物时定下其来源、限度与代价；world_processes只作机会性推进；encounter_beat.must_introduce为true时必须安排一个与玩家当前活动相关的带目的进场。满足优先：玩家索取的体验（读心心声/数值/面板清单）直接给足；storybook_candidates只是隐藏参考，玩家未指向主线时不选invite、不安排主线人物打断玩家当前玩法。os_assignments给0-2名本轮有内心戏价值的角色（口嫌体正直、表里反差优先），不逢人配OS。每名上场角色的visible_behavior必须依据其persona三层（surface外壳/core_want诉求/bedrock底色）与current_state（mood/stance_to_player）生成，且不得与其recent_patterns里的模式同轴——连续两轮同一种反应即为违规，换一个反应面。npc_state_updates汇报本轮互动造成的状态变化（mood可自由写，stance_to_player只能取戒备/试探/松动/亲近/裂痕且一次至多移一档，pattern用2-6字概括该角色本轮反应模式）。beat_outline把本轮编排成4-6个节点（stage取承接/发展/转/落，发展与转可以各有多个）：本轮核心变化（信息更新/关系位移/局面改变）必须落在中部节点；每个节点的note要具体到可拍摄的事（谁做什么、出现什么），足以支撑300-400字的正文展开。玩家做偷窃/暗中行动等风险动作时，你按关系、情境与戏剧性裁定成、败或被抓个半截（loot_hint写结果）。npc_interaction可指定一对NPC本轮发生不经过玩家的互动及其性质（依npc_relations当前值：warmth低互相带刺、tension高正面冲突）。只输出JSON：{"beat_type":"relationship|daily|exploration|conflict|reveal|aftermath|world_event","beat_goal":"一句话","beat_outline":[{"stage":"承接|发展|转|落","note":"该节点一句话"}],"npc_state_updates":[{"id":"","mood":"","stance_to_player":"","pattern":""}],"story_routing":"follow|echo|invite|trigger|diverge","on_stage":["角色id"],"npc_motives":[{"id":"","want":"","behavior":""}],"world_change":null,"process_moves":[{"id":"","advance":false,"note":""}],"introduce_encounter":null,"closing_direction":"本轮结尾必须落在的具体钩子（新异动/未完动作/他人反应/环境变化，能自然勾出玩家下一步，不许平收）","os_assignments":[{"id":"","tone":""}],"loot_hint":null,"npc_interaction":null}`;
+      const directorSystem = `你是互动仙侠故事的隐藏导演。不写玩家可见正文，不输出思维链，只为当前一拍输出一个JSON拍板。原则：先承认玩家本轮已造成的有效变化；只选真正相关的0-3名角色上场；角色行为由其private_goal、secret与关系张力决定；玩家引入新事物时定下其来源、限度与代价；world_processes只作机会性推进；encounter_beat.must_introduce为true时必须安排一个与玩家当前活动相关的带目的进场。满足优先：玩家索取的体验（读心心声/数值/面板清单）直接给足；storybook_candidates只是隐藏参考，玩家未指向主线时不选invite、不安排主线人物打断玩家当前玩法。os_assignments给0-2名本轮有内心戏价值的角色（口嫌体正直、表里反差优先），不逢人配OS。每名上场角色的visible_behavior必须依据其persona三层（surface外壳/core_want诉求/bedrock底色）与current_state（mood/stance_to_player）生成，且不得与其recent_patterns里的模式同轴——连续两轮同一种反应即为违规，换一个反应面。npc_state_updates汇报本轮互动造成的状态变化（mood可自由写，stance_to_player只能取戒备/试探/松动/亲近/裂痕且一次至多移一档，pattern用2-6字概括该角色本轮反应模式）。beat_outline把本轮编排成4-6个节点（stage取承接/发展/转/落，发展与转可以各有多个）：本轮核心变化（信息更新/关系位移/局面改变）必须落在中部节点；每个节点的note要具体到可拍摄的事（谁做什么、出现什么），足以支撑300-400字的正文展开；节点的执行者只能是NPC、环境或世界事件，绝不把玩家的行动、反应或决定编排成节点内容——要推进就把局面推到玩家面前，等玩家自己动。engagement拍板本轮反应形状：私密对谈、一对一深交、单人求助时mode取focus并写focus_person（只有他做主要回应，其他人至多背景小动作）；宣布大事、公开冲突、多人利益同时被触及（修罗场）时mode取ensemble（被卷入者必须互相接话互相冲突，形成NPC对NPC的连锁，不许每人各自对玩家说一句）。玩家做偷窃/暗中行动等风险动作时，你按关系、情境与戏剧性裁定成、败或被抓个半截（loot_hint写结果）。npc_interaction可指定一对NPC本轮发生不经过玩家的互动及其性质（依npc_relations当前值：warmth低互相带刺、tension高正面冲突）。只输出JSON：{"beat_type":"relationship|daily|exploration|conflict|reveal|aftermath|world_event","beat_goal":"一句话","beat_outline":[{"stage":"承接|发展|转|落","note":"该节点一句话"}],"npc_state_updates":[{"id":"","mood":"","stance_to_player":"","pattern":""}],"story_routing":"follow|echo|invite|trigger|diverge","on_stage":["角色id"],"npc_motives":[{"id":"","want":"","behavior":""}],"world_change":null,"process_moves":[{"id":"","advance":false,"note":""}],"introduce_encounter":null,"closing_direction":"本轮结尾必须落在的具体钩子（新异动/未完动作/他人反应/环境变化，能自然勾出玩家下一步，不许平收）","engagement":{"mode":"focus|ensemble","focus_person":"角色id或null"},"os_assignments":[{"id":"","tone":""}],"loot_hint":null,"npc_interaction":null}`;
       const rawBeat = await callStoryModel(directorSystem, JSON.stringify(directorPacket), 0.5, 1400);
       const parsedBeat = typeof rawBeat === "string" ? parseModelJson(rawBeat) : rawBeat;
       if (parsedBeat && typeof parsedBeat === "object") directorBeat = parsedBeat as Record<string, unknown>;
@@ -1564,6 +1572,7 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
       directorMs,
       directorBeat,
       streamRejectReason,
+      playerAgencyHits: countPlayerAgencyHits(result.events),
       chapterComplete,
       nextChapterId: chapterComplete ? nextSegment?.chapterId : undefined,
       mediaCues: materialCommitted && activatedCandidate && result.storyRouting === "trigger"
