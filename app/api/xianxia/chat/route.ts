@@ -1083,7 +1083,7 @@ ${JSON.stringify(runtimePacket)}
 玩家本轮明确提交：${JSON.stringify(input)}
 
 生成规则：
-- 每一轮就是一场完整的戏。把director_beat.beat_outline的每个节点展开成2-3个events、约300-400个中文字符：写出该节点里每个人的具体动作、位置变化与对白，不许把节点一笔带过。全轮合计6至10个events、1100至1800个中文字符，不足1100字即为不合格输出。每场戏必有信息增量（新事实/新关系动向/新细节至少一样）与落幕镜头。玩家输入再短，这场戏也要演完整；不用重复、排比、总结凑字。对白必须拆碎：单条dialogue以一两句话为宜（一般不超过60字），同一角色可以在一轮内多次开口、被打断、接话、补一句；严禁让任何角色一次性说一大段台词，长内容拆成多条气泡与动作narration交替。
+- 每一轮就是一场完整的戏：beat_outline的每个节点都必须实际演出（谁做什么、出现什么），不许把任何节点一笔带过或合并跳过。全轮合计6至10个events、900至1400个中文字符。每场戏必有信息增量（新事实、新关系动向、可读的新细节，至少两样）与落幕镜头。玩家输入再短，这场戏也要四拍演完整；不用重复、排比、总结凑字。对白必须拆碎：单条dialogue以一两句话为宜（一般不超过60字），同一角色可以在一轮内多次开口、被打断、接话、补一句；严禁让任何角色一次性说一大段台词，长内容拆成多条气泡与动作narration交替。
 - 前两个events内让真正听见或看见的人具体承接玩家输入，不复述后立刻转移话题。
 - NPC回应的是玩家这一次实际说了什么、做了什么以及它造成的可见变化，不是角色模板。玩家沉默不自动等于隐瞒，含糊不自动等于装傻，拒绝不自动等于嘴硬，突然冒险也不能被改写成“仍在稳健布局”。既有声誉只能造成期待或反差，不能覆盖当下表现。
 - 玩家必须是场面的行动中心：NPC的判断、请求、试探、照顾或阻拦要落到“你现在能决定什么”。
@@ -1378,7 +1378,7 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
         const parsed = parseModelJson(streamedText);
         const streamedTurn = normalizeTurn(parsed, story, segment.present);
         if (streamedTurn) {
-          if (turnTextLength(streamedTurn) >= 900) raw = parsed;
+          if (turnTextLength(streamedTurn) >= 700) raw = parsed;
           else shortFallbackRaw = parsed;
         }
       } catch {
@@ -1399,9 +1399,9 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
             validate: (value) => {
               const turn = normalizeTurn(value, story, segment.present);
               if (!turn) return { ok: false, reason: "xianxia_turn_shape_invalid" };
-              if (turnTextLength(turn) < 900) {
+              if (turnTextLength(turn) < 700) {
                 shortFallbackRaw = value;
-                return { ok: false, reason: "正文合计不足1100中文字符：把这一场戏写完整——用各角色的小动作、环境变化与角色间互动补足体量，对白保持拆碎（单条不超过60字），不重复不凑字" };
+                return { ok: false, reason: "正文合计不足900中文字符：把这一场戏写完整——用各角色的小动作、环境变化与角色间互动补足体量，对白保持拆碎（单条不超过60字），不重复不凑字" };
               }
               return true;
             },
