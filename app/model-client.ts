@@ -1,3 +1,5 @@
+import { jsonrepair } from "jsonrepair";
+
 type ModelEnv = {
   DEEPSEEK_API_KEY?: string;
   DEEPSEEK_MODEL?: string;
@@ -69,6 +71,13 @@ export function parseModelJson(raw: string): unknown {
     } catch {
       // Keep looking: a model may place a small JSON example before the real object.
     }
+  }
+
+  // 台词里的裸引号等破损（历史发生率 ~13%）：修复后返回，而不是抛错触发整轮重生成。
+  try {
+    return JSON.parse(jsonrepair(text));
+  } catch {
+    // fall through to the original error
   }
 
   throw directError instanceof Error ? directError : new Error("model_json_invalid");

@@ -658,8 +658,10 @@ function advanceWorldProcesses(current: WorldProcess[], moves: unknown, newProce
 }
 
 // 问句冷却的程序执行：上轮已问句收尾，本轮末事件再以问句收尾则剪掉末句。
-function stripTrailingQuestionSentence(events: XianxiaEvent[]): XianxiaEvent[] {
+function stripTrailingQuestionSentence(events: XianxiaEvent[], minKeep = 0): XianxiaEvent[] {
   if (!events.length) return events;
+  // 已流式发出的条目是对用户的承诺，事后校验不许再改/剪它们。
+  if (events.length - 1 < minKeep) return events;
   const out = events.map((event) => ({ ...event }));
   const last = out[out.length - 1];
   const text = (last.text ?? "").trim();
@@ -775,9 +777,11 @@ function promoteQuotedSpeech(events: XianxiaEvent[], story: XianxiaStory, presen
 const hangingTail = /(?:[^。！？!?]*(?:你|少侠|师弟|师兄)[^。！？!?]*还是[^。！？!?]*[？?]|[^。！？!?]*(?:等待|等着|静候)[^。！？!?]{0,20}(?:回答|决定|答复|示下|回应)[^。！？!?]*[。！？!?]?)\s*$/u;
 
 // 确定性剪除"A还是B问句/等待玩家回答"式悬空结尾：prompt 禁令屡被违反，改为程序义务。
-function stripHangingEnding(events: XianxiaEvent[]): XianxiaEvent[] {
+function stripHangingEnding(events: XianxiaEvent[], minKeep = 0): XianxiaEvent[] {
   const out = events.map((event) => ({ ...event }));
   for (let guard = 0; guard < 3 && out.length; guard += 1) {
+    // 已流式发出的条目不许再改/剪（发出即承诺）；剪尾只作用于未下发的尾格。
+    if (out.length - 1 < minKeep) break;
     const last = out[out.length - 1];
     const text = (last.text ?? "").trim();
     const match = text.match(hangingTail);
@@ -794,41 +798,45 @@ function stripHangingEnding(events: XianxiaEvent[]): XianxiaEvent[] {
   return out;
 }
 
-function normalizeTurn(value: unknown, story: XianxiaStory, present: string[]): TurnResult | null {
+// 单条 raw event 的清洗规则：流式下发路径与终版 normalizeTurn 必须共用同一份，
+// 否则（os 不在场转旁白 / 无效 person 转旁白 / 空文本丢弃）会造成流式与终版分歧。
+function cleanRawEvent(raw: unknown, story: XianxiaStory, presentSet: Set<string>): XianxiaEvent[] {
+  if (!raw || typeof raw !== "object") return [];
+  const event = raw as Record<string, unknown>;
+  const text = typeof event.text === "string" ? event.text.trim() : "";
+  if (!text || !eventTypes.has(String(event.type))) return [];
+  if (event.type === "system") return [{ type: "system", text }];
+  if (event.type === "loot") {
+    const items = cleanItems(event.items, 8);
+    return items.length ? [{ type: "loot", text, items }] : [{ type: "system", text }];
+  }
+  if (event.type === "os") {
+    const osPerson = typeof event.person === "string" ? event.person : "";
+    return presentSet.has(osPerson) && osPerson !== story.playerRole.id
+      ? [{ type: "os", person: osPerson, text }]
+      : [{ type: "narration", text }];
+  }
+  if (event.type !== "dialogue") return [{ type: "narration", text }];
+  const person = typeof event.person === "string" ? event.person.trim() : "";
+  const isTransient = Boolean(person) && !presentSet.has(person)
+    && person !== story.playerRole.id && person !== story.playerRole.name
+    && !story.characters.some((c) => c.id === person)
+    && [...person].length <= 10;
+  if (isTransient) return [{ type: "dialogue", person, text }];
+  if (!presentSet.has(person) || person === story.playerRole.id) {
+    // A useful stage direction should not force a full scene regeneration
+    // merely because the model omitted or mistyped its actor id.
+    return [{ type: "narration", text }];
+  }
+  return [{ type: "dialogue", person, text }];
+}
+
+function normalizeTurn(value: unknown, story: XianxiaStory, present: string[], minKeep = 0): TurnResult | null {
   if (!value || typeof value !== "object") return null;
   const item = value as Record<string, unknown>;
   if (!Array.isArray(item.events) || !Array.isArray(item.choices)) return null;
   const presentSet = new Set(present);
-  const events = item.events.flatMap((raw): XianxiaEvent[] => {
-    if (!raw || typeof raw !== "object") return [];
-    const event = raw as Record<string, unknown>;
-    const text = typeof event.text === "string" ? event.text.trim() : "";
-    if (!text || !eventTypes.has(String(event.type))) return [];
-    if (event.type === "system") return [{ type: "system", text }];
-    if (event.type === "loot") {
-      const items = cleanItems(event.items, 8);
-      return items.length ? [{ type: "loot", text, items }] : [{ type: "system", text }];
-    }
-    if (event.type === "os") {
-      const osPerson = typeof event.person === "string" ? event.person : "";
-      return presentSet.has(osPerson) && osPerson !== story.playerRole.id
-        ? [{ type: "os", person: osPerson, text }]
-        : [{ type: "narration", text }];
-    }
-    if (event.type !== "dialogue") return [{ type: "narration", text }];
-    const person = typeof event.person === "string" ? event.person.trim() : "";
-    const isTransient = Boolean(person) && !presentSet.has(person)
-      && person !== story.playerRole.id && person !== story.playerRole.name
-      && !story.characters.some((c) => c.id === person)
-      && [...person].length <= 10;
-    if (isTransient) return [{ type: "dialogue", person, text }];
-    if (!presentSet.has(person) || person === story.playerRole.id) {
-      // A useful stage direction should not force a full scene regeneration
-      // merely because the model omitted or mistyped its actor id.
-      return [{ type: "narration", text }];
-    }
-    return [{ type: "dialogue", person, text }];
-  }).slice(0, 10);
+  const events = item.events.flatMap((raw) => cleanRawEvent(raw, story, presentSet)).slice(0, 10);
   if (events.length < 5) return null;
 
   const choices = item.choices.flatMap((raw): XianxiaChoice[] => {
@@ -840,7 +848,7 @@ function normalizeTurn(value: unknown, story: XianxiaStory, present: string[]): 
   }).slice(0, 2);
   if (choices.length !== 2) return null;
   return {
-    events: stripHangingEnding(inlineOsEvents(splitLongDialogue(promoteQuotedSpeech(events, story, present)))),
+    events: stripHangingEnding(inlineOsEvents(splitLongDialogue(promoteQuotedSpeech(events, story, present))), minKeep),
     choices,
     hudDelta: normalizeHudDelta(item.hud_delta),
     storyRouting: storyRoutings.has(item.story_routing as StoryRouting)
@@ -858,34 +866,63 @@ function normalizeTurn(value: unknown, story: XianxiaStory, present: string[]): 
 // 缓冲一格 emit，保证 os 出现时其前一个事件还未发出、可以合并——终版与流式内容从此基本一致。
 function createStreamEventProcessor(story: XianxiaStory, present: string[], onEvent: (event: XianxiaEvent) => void) {
   let held: XianxiaEvent | null = null;
+  // 落单 os（前一条不是同人台词）不立即发独立条：inlineOsEvents 会优先把它并进下一条
+  // 同人台词的尾部，流式必须做同样的前瞻，否则中部就会与终版分歧。
+  let pendingOs: XianxiaEvent | null = null;
+  let sent = 0;
+  // 与 normalizeTurn 的 slice(0, 10) 对齐：清洗后第 11 条起终版不会保留，流式也不许下发。
+  let cleanedCount = 0;
+  const presentSet = new Set(present);
   const transform = (event: XianxiaEvent): XianxiaEvent[] =>
     splitLongDialogue(promoteQuotedSpeech([event], story, present));
+  const send = (event: XianxiaEvent) => { sent += 1; onEvent(event); };
   const flushHeld = () => {
-    if (held) { onEvent(held); held = null; }
+    if (held) { send(held); held = null; }
+  };
+  const materializePendingOs = () => {
+    if (pendingOs) {
+      send({ type: "dialogue", person: pendingOs.person, text: `（os：${pendingOs.text}）` });
+      pendingOs = null;
+    }
   };
   return {
-    push(raw: XianxiaEvent) {
-      const pieces = transform(raw);
+    push(raw: unknown) {
+      const cleaned: XianxiaEvent[] = [];
+      for (const item of cleanRawEvent(raw, story, presentSet)) {
+        if (cleanedCount >= 10) break;
+        cleanedCount += 1;
+        cleaned.push(item);
+      }
+      const pieces = cleaned.flatMap((item) => transform(item));
       for (const piece of pieces) {
-        if (piece.type === "os" && held && held.type === "dialogue" && held.person === piece.person) {
-          held = { ...held, text: `${held.text}（os：${piece.text}）` };
+        if (piece.type === "os" && piece.person) {
+          if (held && held.type === "dialogue" && held.person === piece.person) {
+            held = { ...held, text: `${held.text}（os：${piece.text}）` };
+            continue;
+          }
+          flushHeld();
+          materializePendingOs();
+          pendingOs = piece;
           continue;
         }
-        if (piece.type === "os" && piece.person) {
-          flushHeld();
-          held = { type: "dialogue", person: piece.person, text: `（os：${piece.text}）` };
-          continue;
+        if (pendingOs) {
+          if (piece.type === "dialogue" && piece.person === pendingOs.person) {
+            flushHeld();
+            held = { ...piece, text: `${piece.text}（os：${pendingOs.text}）` };
+            pendingOs = null;
+            continue;
+          }
+          materializePendingOs();
         }
         flushHeld();
         held = piece;
       }
     },
-    flush: flushHeld,
+    // 结尾一格不经流式下发：终版的剪尾校验（悬空问句/问句冷却）只作用于未发出的尾部，
+    // 把它留给终版对账追加，用户就永远不会看到"流式出现过、终版消失"的闪变。
+    flush: () => { held = null; pendingOs = null; },
+    emittedCount: () => sent,
   };
-}
-
-function turnTextLength(turn: TurnResult): number {
-  return turn.events.reduce((sum, event) => sum + [...(event.text ?? "")].length, 0);
 }
 
 function buildCanonPacket(scanText: string) {
@@ -1158,7 +1195,11 @@ function extractClosedEvents(text: string): StreamedEvent[] {
       if (parsed && typeof parsed.text === "string" && ["narration", "dialogue", "os", "system", "loot"].includes(String(parsed.type))) {
         events.push(parsed);
       }
-    } catch { /* 未闭合或坏对象：跳过 */ }
+    } catch {
+      // 坏对象（裸引号等）即停：破损点之后一律不经流式下发，交给终版 jsonrepair 补全，
+      // 保证流式序列始终是终版的前缀（跳过继续会造成中部跳洞→前端换尾闪变）。
+      break;
+    }
     index = objectEnd + 1;
   }
   return events;
@@ -1355,8 +1396,9 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
     // V4.4 流式：首发尝试用流式调用并逐个下发已闭合 event；
     // 解析或校验失败时回落到原有 callStoryModel 全套修复/换模机器（质量路径不变）。
     let raw: unknown = null;
-    let shortFallbackRaw: unknown = null;
     let streamRejectReason: string | null = null;
+    // 流式已下发的事件条数：终版剪尾校验不许动这个范围内的内容（发出即承诺）。
+    let streamSentCount = 0;
     if (onEvent) {
       try {
         let emittedCount = 0;
@@ -1379,9 +1421,8 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
         const parsed = parseModelJson(streamedText);
         const streamedTurn = normalizeTurn(parsed, story, segment.present);
         if (streamedTurn) {
-          const streamLen = turnTextLength(streamedTurn);
-          if (streamLen >= 700) raw = parsed;
-          else { shortFallbackRaw = parsed; streamRejectReason = `short:${streamLen}`; }
+          raw = parsed;
+          streamSentCount = streamProcessor?.emittedCount() ?? 0;
         } else {
           streamRejectReason = parsed ? "shape_invalid" : "parse_failed";
         }
@@ -1391,36 +1432,27 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
       }
     }
     if (raw === null) {
-      try {
-        raw = await callStoryModel(
-          turnPrompt,
-          "生成本轮仙侠互动场景，只输出JSON。正文必须写满900至1400个中文字符：把beat_outline的每一个节点都完整演出来（谁做什么、出现什么、对白与反应），不许一笔带过或合并节点；不足900字即不合格。",
-          0.62,
-          5600,
-          {
-            stage: "prompt3",
-            requestTimeoutMs: 60000,
-            ...((body as { writerModel?: string }).writerModel ? { primaryModel: (body as { writerModel?: string }).writerModel } : {}),
-            validate: (value) => {
-              const turn = normalizeTurn(value, story, segment.present);
-              if (!turn) return { ok: false, reason: "xianxia_turn_shape_invalid" };
-              if (turnTextLength(turn) < 700) {
-                shortFallbackRaw = value;
-                return { ok: false, reason: "正文合计不足900中文字符：把这一场戏写完整——用各角色的小动作、环境变化与角色间互动补足体量，对白保持拆碎（单条不超过60字），不重复不凑字" };
-              }
-              return true;
-            },
+      raw = await callStoryModel(
+        turnPrompt,
+        "生成本轮仙侠互动场景，只输出JSON。正文必须写满900至1400个中文字符：把beat_outline的每一个节点都完整演出来（谁做什么、出现什么、对白与反应），不许一笔带过或合并节点；不足900字即不合格。",
+        0.62,
+        5600,
+        {
+          stage: "prompt3",
+          requestTimeoutMs: 60000,
+          ...((body as { writerModel?: string }).writerModel ? { primaryModel: (body as { writerModel?: string }).writerModel } : {}),
+          validate: (value) => {
+            const turn = normalizeTurn(value, story, segment.present);
+            if (!turn) return { ok: false, reason: "xianxia_turn_shape_invalid" };
+            return true;
           },
-        );
-      } catch (error) {
-        if (shortFallbackRaw !== null) raw = shortFallbackRaw;
-        else throw error;
-      }
+        },
+      );
     }
-    const result = normalizeTurn(raw, story, segment.present);
+    const result = normalizeTurn(raw, story, segment.present, streamSentCount);
     if (!result) throw new Error("prompt3_shape_invalid_after_validation");
     if (baseSceneMemory.lastClosingMode === "question") {
-      result.events = stripTrailingQuestionSentence(result.events);
+      result.events = stripTrailingQuestionSentence(result.events, streamSentCount);
     }
     result.choices = ensureDivergentChoices(result.choices);
     const beatMoves = directorBeat && Array.isArray(directorBeat.process_moves) ? directorBeat.process_moves : null;
