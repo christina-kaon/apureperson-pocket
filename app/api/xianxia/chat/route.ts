@@ -840,7 +840,7 @@ function normalizeTurn(value: unknown, story: XianxiaStory, present: string[]): 
   }).slice(0, 2);
   if (choices.length !== 2) return null;
   return {
-    events: stripHangingEnding(splitLongDialogue(inlineOsEvents(promoteQuotedSpeech(events, story, present)))),
+    events: stripHangingEnding(inlineOsEvents(splitLongDialogue(promoteQuotedSpeech(events, story, present)))),
     choices,
     hudDelta: normalizeHudDelta(item.hud_delta),
     storyRouting: storyRoutings.has(item.story_routing as StoryRouting)
