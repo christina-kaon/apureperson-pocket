@@ -1,7 +1,19 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import type { XianxiaChoice, XianxiaEvent, XianxiaMediaCue } from "./story-packages";
+
+// narration 轻量富文本：**粗体** 与 \n 分行（开场分镜的场景标题/道具强调排版用；不引入完整 markdown）。
+function renderRichText(text: string): ReactNode[] {
+  return text.split("\n").flatMap((line, lineIndex, lines) => {
+    const parts = line.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part, partIndex) =>
+      part.startsWith("**") && part.endsWith("**")
+        ? <strong key={`${lineIndex}-${partIndex}`}>{part.slice(2, -2)}</strong>
+        : <Fragment key={`${lineIndex}-${partIndex}`}>{part}</Fragment>
+    );
+    return lineIndex < lines.length - 1 ? [...parts, <br key={`br-${lineIndex}`} />] : parts;
+  });
+}
 
 type PublicCharacter = {
   id: string;
@@ -558,7 +570,7 @@ export default function XianxiaExperience({ story }: { story: PublicXianxiaStory
               </article>
             );
           } else if (item.type !== "dialogue" || !item.person) {
-            eventContent = <p className="xx-narration">{item.text}</p>;
+            eventContent = <p className="xx-narration">{renderRichText(item.text)}</p>;
           } else {
             const character = characterById.get(item.person);
             eventContent = (
