@@ -1155,7 +1155,7 @@ function extractClosedEvents(text: string): StreamedEvent[] {
     if (objectEnd < 0) break;
     try {
       const parsed = JSON.parse(text.slice(objectStart, objectEnd + 1)) as StreamedEvent;
-      if (parsed && typeof parsed.text === "string" && (parsed.type === "narration" || parsed.type === "dialogue")) {
+      if (parsed && typeof parsed.text === "string" && ["narration", "dialogue", "os", "system", "loot"].includes(String(parsed.type))) {
         events.push(parsed);
       }
     } catch { /* 未闭合或坏对象：跳过 */ }
