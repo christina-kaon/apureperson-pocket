@@ -1356,6 +1356,7 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
     // 解析或校验失败时回落到原有 callStoryModel 全套修复/换模机器（质量路径不变）。
     let raw: unknown = null;
     let shortFallbackRaw: unknown = null;
+    let streamRejectReason: string | null = null;
     if (onEvent) {
       try {
         let emittedCount = 0;
@@ -1378,11 +1379,15 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
         const parsed = parseModelJson(streamedText);
         const streamedTurn = normalizeTurn(parsed, story, segment.present);
         if (streamedTurn) {
-          if (turnTextLength(streamedTurn) >= 700) raw = parsed;
-          else shortFallbackRaw = parsed;
+          const streamLen = turnTextLength(streamedTurn);
+          if (streamLen >= 700) raw = parsed;
+          else { shortFallbackRaw = parsed; streamRejectReason = `short:${streamLen}`; }
+        } else {
+          streamRejectReason = parsed ? "shape_invalid" : "parse_failed";
         }
-      } catch {
+      } catch (streamError) {
         raw = null;
+        streamRejectReason = `stream_error:${streamError instanceof Error ? streamError.message.slice(0, 60) : "unknown"}`;
       }
     }
     if (raw === null) {
@@ -1496,6 +1501,7 @@ async function runXianxiaTurn(body: TurnBody, onEvent?: (event: StreamedEvent) =
       current: { segmentId: segment.id, chapterId: segment.chapterId, location: nextSceneMemory.location ?? segment.location },
       directorMs,
       directorBeat,
+      streamRejectReason,
       chapterComplete,
       nextChapterId: chapterComplete ? nextSegment?.chapterId : undefined,
       mediaCues: materialCommitted && activatedCandidate && result.storyRouting === "trigger"
